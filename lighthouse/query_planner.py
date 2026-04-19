@@ -122,7 +122,12 @@ def _normalize_sorts(payload, endpoint: str | None = None) -> None:
 
     Crustdata is inconsistent: `/company/search` expects `column`, while
     `/person/search` expects `field`. We normalise to whichever the endpoint
-    wants so the LLM's arbitrary choice doesn't blow up the request."""
+    wants so the LLM's arbitrary choice doesn't blow up the request.
+
+    Also defaults the required `order` field — smaller local LLMs (qwen 3B)
+    frequently omit it, which Crustdata rejects as a 400. "desc" is the right
+    default for the ranking use-cases the planner emits (recency, seniority).
+    """
     if not isinstance(payload, dict):
         return
     sorts = payload.get("sorts")
@@ -130,9 +135,22 @@ def _normalize_sorts(payload, endpoint: str | None = None) -> None:
         return
     target_key = "column" if endpoint == "/company/search" else "field"
     other_key = "field" if target_key == "column" else "column"
+    cleaned: list[dict] = []
     for entry in sorts:
-        if isinstance(entry, dict) and other_key in entry and target_key not in entry:
+        if not isinstance(entry, dict):
+            continue
+        if other_key in entry and target_key not in entry:
             entry[target_key] = entry.pop(other_key)
+        if not entry.get(target_key):
+            continue  # unusable sort — drop it instead of failing the request
+        order = entry.get("order")
+        if order not in ("asc", "desc"):
+            entry["order"] = "desc"
+        cleaned.append(entry)
+    if cleaned:
+        payload["sorts"] = cleaned
+    else:
+        payload.pop("sorts", None)
 
 
 def _normalize_operators(node):

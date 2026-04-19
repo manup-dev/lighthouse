@@ -1,2 +1,10 @@
 [     231ms] [INFO] %cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/compiled/react-dom/cjs/react-dom.development.js:38559
 [    6872ms] [ERROR] Failed to load resource: net::ERR_FAILED @ http://127.0.0.1:8787/match:0
+[  566566ms] [LOG] [Fast Refresh] rebuilding @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/client/components/react-dev-overlay/app/hot-reloader-client.js:186
+[  566711ms] [LOG] [Fast Refresh] rebuilding @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/client/components/react-dev-overlay/app/hot-reloader-client.js:186
+[  566715ms] [LOG] [Fast Refresh] done in 3ms @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/client/components/react-dev-overlay/app/hot-reloader-client.js:43
+[  567133ms] [LOG] [Fast Refresh] done in 421ms @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/client/components/react-dev-overlay/app/hot-reloader-client.js:43
+[  567308ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:3030/?_rsc=1p60s:0
+[  567542ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:3030/_next/static/chunks/main-app.js?v=1776583457300:0
+[  567542ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:3030/_next/static/chunks/app/page.js:0
+[  567543ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:3030/_next/static/chunks/app-pages-internals.js:0

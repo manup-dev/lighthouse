@@ -2,6 +2,7 @@
 
 import Logo from "./Logo";
 import ThemeToggle from "./ThemeToggle";
+import { startTour } from "./Tour";
 
 export default function TopNav() {
   return (
@@ -29,6 +30,21 @@ export default function TopNav() {
         </a>
 
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={startTour}
+            aria-label="Replay onboarding tour"
+            title="Replay tour"
+            className="
+              inline-flex items-center justify-center h-8 w-8 rounded-lg
+              border border-neutral-200 dark:border-neutral-800
+              bg-white/70 dark:bg-neutral-900/60 backdrop-blur-sm
+              text-[13px] font-semibold text-neutral-600 dark:text-neutral-300
+              hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors
+            "
+          >
+            ?
+          </button>
           <a
             href="https://github.com/manup-dev/lighthouse"
             target="_blank"

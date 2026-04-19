@@ -14,6 +14,7 @@ import LogConsole, { type LogLine } from "@/components/LogConsole";
 import QueueWait from "@/components/QueueWait";
 import RunBanner from "@/components/RunBanner";
 import TopNav from "@/components/TopNav";
+import Tour from "@/components/Tour";
 import RotatingWord from "@/components/RotatingWord";
 import Logo from "@/components/Logo";
 
@@ -56,25 +57,32 @@ const DEMO_SEQUENCE: PipelineStage[] = [
   "outreach",
 ];
 
-/** Format a cost banner like "$0.00 · 23s · local qwen2.5:14b". */
+/** Format the real stats from the pipeline into a compact banner.
+ * Each segment is only emitted when the pipeline actually reported it — we
+ * don't invent numbers or model names when the backend didn't send them. */
 function formatCostBanner(stats: Record<string, unknown>): string {
+  const parts: string[] = [];
+
   const costRaw = stats["cost_usd"];
-  const cost =
-    typeof costRaw === "number" ? `$${costRaw.toFixed(2)}` : "$0.00";
+  if (typeof costRaw === "number") parts.push(`$${costRaw.toFixed(2)}`);
 
   const duration =
     typeof stats["duration_sec"] === "number"
       ? Math.round(stats["duration_sec"] as number)
       : typeof stats["elapsed_ms"] === "number"
       ? Math.round((stats["elapsed_ms"] as number) / 1000)
-      : 23;
+      : null;
+  if (duration !== null) parts.push(`${duration}s`);
 
+  const provider =
+    typeof stats["provider"] === "string" ? (stats["provider"] as string) : null;
   const model =
     typeof stats["model"] === "string" && stats["model"].length > 0
       ? (stats["model"] as string)
-      : "local qwen2.5:14b";
+      : null;
+  if (model) parts.push(provider && provider !== "anthropic" ? `${provider}·${model}` : model);
 
-  return `${cost} · ${duration}s · ${model}`;
+  return parts.join(" · ");
 }
 
 export default function Home() {
@@ -458,7 +466,7 @@ export default function Home() {
             <span className="text-neutral-900 dark:text-neutral-200 font-medium">5 senior hires</span> — each with a recent-post angle you can use.
           </p>
 
-          <div className="w-full max-w-2xl mt-2">
+          <div className="w-full max-w-2xl mt-2" data-tour="input">
             <InputForm onSubmit={handleSubmit} disabled={isRunning} />
           </div>
 
@@ -652,16 +660,34 @@ export default function Home() {
           {/* transparency panel */}
           <HowWeSearched plans={result.query_plan} />
 
-          {/* footer stats */}
+          {/* footer stats — everything sourced from what the pipeline actually reported */}
           <div className="mt-2 text-center text-xs text-neutral-500">
-            scanned{" "}
-            <span className="tabular-nums">
-              {Number(result.stats.profiles_scanned ?? 0).toLocaleString()}
-            </span>{" "}
-            profiles · ranked 15 · ready in{" "}
-            <span className="tabular-nums">
-              {((Number(result.stats.elapsed_ms ?? 0)) / 1000).toFixed(1)}s
-            </span>
+            {(() => {
+              const candidateCounts = (result.stats.candidate_counts ?? {}) as Record<string, number>;
+              const scanned = Object.values(candidateCounts).reduce(
+                (sum, n) => sum + (typeof n === "number" ? n : 0),
+                0,
+              );
+              const ranked =
+                result.investors.length + result.design_partners.length + result.talent.length;
+              const dur =
+                typeof result.stats.duration_sec === "number"
+                  ? (result.stats.duration_sec as number)
+                  : typeof result.stats.elapsed_ms === "number"
+                  ? (result.stats.elapsed_ms as number) / 1000
+                  : null;
+              return (
+                <>
+                  scanned <span className="tabular-nums">{scanned.toLocaleString()}</span>{" "}
+                  profiles · ranked <span className="tabular-nums">{ranked}</span>
+                  {dur !== null && (
+                    <>
+                      {" "}· ready in <span className="tabular-nums">{dur.toFixed(1)}s</span>
+                    </>
+                  )}
+                </>
+              );
+            })()}
           </div>
         </div>
       )}
@@ -673,18 +699,23 @@ export default function Home() {
             Try <code className="px-1 py-0.5 rounded bg-neutral-100 dark:bg-neutral-800">github.com/acme/freight-graph</code>{" "}
             or any public repo — or explore a baked sample ↓
           </div>
-          <QueueWait
-            position={0}
-            depth={0}
-            etaSec={0}
-            mode="idle"
-            onOpenSample={handleOpenSample}
-          />
+          <div data-tour="samples" className="w-full">
+            <QueueWait
+              position={0}
+              depth={0}
+              etaSec={0}
+              mode="idle"
+              onOpenSample={handleOpenSample}
+            />
+          </div>
         </>
       )}
 
       {/* live backend trace */}
       <LogConsole logs={logs} running={isRunning} />
+
+      {/* first-visit onboarding tour — reopen from the TopNav "?" button */}
+      <Tour />
 
       {/* draft refine modal */}
       {forgePerson && (

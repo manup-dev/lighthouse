@@ -328,7 +328,12 @@ start_tunnel() {
   : > "$TUNNEL_URL_FILE"
   echo "→ opening cloudflared quick tunnel → http://127.0.0.1:$WEB_PORT (logs: $TUNNEL_LOG)"
   # --no-autoupdate avoids periodic version-check network calls.
+  # --protocol http2: QUIC buffers SSE events aggressively on quick tunnels —
+  # the browser never sees stage/log events until many KB have piled up. HTTP/2
+  # with chunked transfer flushes per-event, which is what our live-trace UI
+  # needs.
   nohup "$CLOUDFLARED_BIN" tunnel --no-autoupdate \
+    --protocol http2 \
     --url "http://127.0.0.1:$WEB_PORT" \
     >> "$TUNNEL_LOG" 2>&1 &
   local pid=$!

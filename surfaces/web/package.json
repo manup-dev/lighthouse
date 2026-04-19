@@ -7,7 +7,12 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "redeploy": "../../scripts/redeploy.sh --tunnel",
+    "redeploy:web": "../../scripts/redeploy.sh web",
+    "redeploy:api": "../../scripts/redeploy.sh api",
+    "redeploy:tunnel": "../../scripts/redeploy.sh tunnel-only",
+    "tunnel:url": "cat /tmp/lighthouse-tunnel.url 2>/dev/null || echo '(no tunnel running)'"
   },
   "dependencies": {
     "clsx": "^2.1.1",

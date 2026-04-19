@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
@@ -119,11 +119,17 @@ async def create_match(req: MatchRequest) -> dict[str, Any]:
     crust = _build_crust()
     pipeline = Pipeline(llm=llm, crust=crust)
 
+    # Capture the event loop so thread-side callbacks can deliver events back
+    # safely. Pipeline stages call on_event / on_log synchronously from the
+    # worker thread; asyncio.Queue.put_nowait is not documented thread-safe,
+    # so we hop via call_soon_threadsafe.
+    loop = asyncio.get_running_loop()
+
     def on_event(ev: StageEvent) -> None:
-        job.queue.put_nowait(("stage", ev))
+        loop.call_soon_threadsafe(job.queue.put_nowait, ("stage", ev))
 
     def on_log(ev: LogEvent) -> None:
-        job.queue.put_nowait(("log", ev))
+        loop.call_soon_threadsafe(job.queue.put_nowait, ("log", ev))
 
     async def _poll_positions() -> None:
         # Wait briefly for slot() to register us, then emit position ticks
@@ -164,13 +170,23 @@ async def create_match(req: MatchRequest) -> dict[str, Any]:
                         {"position": 0, "depth": _run_queue.depth(), "eta_sec": 0},
                     )
                 )
-                result = await pipeline.run(
-                    req.repo_url,
-                    location=req.location,
-                    on_event=on_event,
-                    on_log=on_log,
-                    user_hint=req.user_hint,
-                )
+                # Pipeline stages call the LLM via blocking httpx. Running it
+                # directly in the asyncio event loop freezes every other
+                # request (health, SSE, new /match) until the pipeline finishes.
+                # Offload to a worker thread; the thread spins up its own loop
+                # for the async bits (crust.fan_out uses httpx.AsyncClient).
+                def _run_pipeline_in_thread() -> MatchResult:
+                    return asyncio.run(
+                        pipeline.run(
+                            req.repo_url,
+                            location=req.location,
+                            on_event=on_event,
+                            on_log=on_log,
+                            user_hint=req.user_hint,
+                        )
+                    )
+
+                result = await asyncio.to_thread(_run_pipeline_in_thread)
                 job.result = result
                 job.queue.put_nowait(("result", result))
         except QueueFull as exc:
@@ -328,14 +344,23 @@ async def rerun_query(req: RerunQueryRequest) -> dict[str, Any]:
 
 
 @app.get("/match/{match_id}/events")
-async def match_events(match_id: str) -> EventSourceResponse:
+async def match_events(match_id: str, request: Request) -> EventSourceResponse:
     job = _jobs.get(match_id)
     if job is None:
         raise HTTPException(status_code=404, detail="match not found")
 
     async def event_source():
+        # Poll the queue with a 1s timeout so we can notice client disconnects
+        # instead of awaiting forever. Before this fix, every dropped browser
+        # left a task blocked on queue.get() — after ~15 such drops the event
+        # loop was saturated and every other request (including /health) hung.
         while True:
-            kind, payload = await job.queue.get()
+            if await request.is_disconnected():
+                return
+            try:
+                kind, payload = await asyncio.wait_for(job.queue.get(), timeout=1.0)
+            except asyncio.TimeoutError:
+                continue
             if kind == _DONE_SENTINEL[0]:
                 break
             if kind == "stage":
@@ -349,7 +374,11 @@ async def match_events(match_id: str) -> EventSourceResponse:
             elif kind == "error":
                 yield {"event": "error", "data": json.dumps(payload)}
 
-    return EventSourceResponse(event_source())
+    # ping every 10s so cloudflared / any intermediate proxy doesn't close the
+    # stream as idle during long LLM waits on CPU. The default (15s) is already
+    # inside most proxy idle windows, but under load the pipeline can sit
+    # quiet for 60+s between events, so we tighten it.
+    return EventSourceResponse(event_source(), ping=10)
 
 
 _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
