@@ -90,7 +90,14 @@ class CrustClient:
                 if resp.status_code == 429 and attempt < self._max_retries:
                     await asyncio.sleep(self._retry_base_delay * (2 ** attempt))
                     continue
-                resp.raise_for_status()
+                if resp.status_code >= 400:
+                    # Surface the server's reason — Crustdata puts it in the body.
+                    body = resp.text[:500]
+                    raise httpx.HTTPStatusError(
+                        f"{resp.status_code} {resp.reason_phrase} {endpoint} — {body}",
+                        request=resp.request,
+                        response=resp,
+                    )
                 data = resp.json()
                 self._cache_write(endpoint, payload, data)
                 return data

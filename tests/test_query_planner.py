@@ -182,6 +182,142 @@ def test_query_planner_normalizes_operator_shortcuts(thesis):
     assert conds[2]["conditions"][0]["type"] == "(.)"
 
 
+def test_query_planner_normalizes_sort_key_per_endpoint(thesis):
+    """Crustdata is inconsistent: `/company/search` wants `column`, while
+    `/person/search` wants `field`. Normalize per endpoint so the LLM's
+    arbitrary choice doesn't 400."""
+
+    def fake_llm(system, user):
+        return json.dumps(
+            [
+                {
+                    "endpoint": "/company/search",
+                    "track": "design_partner",
+                    "payload": {
+                        "filters": {"op": "and", "conditions": []},
+                        "sorts": [
+                            {"field": "funding.total_investment_usd", "order": "desc"},
+                        ],
+                    },
+                    "rationale": "r",
+                },
+                {
+                    "endpoint": "/person/search",
+                    "track": "talent",
+                    "payload": {
+                        "filters": {"op": "and", "conditions": []},
+                        "sorts": [
+                            {"column": "professional_network.connections", "order": "desc"},
+                        ],
+                    },
+                    "rationale": "r",
+                },
+            ]
+        )
+
+    plans = QueryPlanner(llm=fake_llm).plan(thesis)
+    company_sort = plans[0].payload["sorts"][0]
+    person_sort = plans[1].payload["sorts"][0]
+    assert "column" in company_sort and "field" not in company_sort
+    assert "field" in person_sort and "column" not in person_sort
+
+
+def test_query_planner_expands_in_range_to_paired_gte_lte(thesis):
+    """`type: "in", value: [50, 500]` on a numeric field means a range.
+    Crustdata has no `in` operator — split into `=>` and `=<`."""
+
+    def fake_llm(system, user):
+        return json.dumps(
+            [
+                {
+                    "endpoint": "/company/search",
+                    "track": "design_partner",
+                    "payload": {
+                        "filters": {
+                            "op": "and",
+                            "conditions": [
+                                {"field": "headcount.total", "type": "in", "value": [50, 500]},
+                            ],
+                        }
+                    },
+                    "rationale": "r",
+                }
+            ]
+        )
+
+    plans = QueryPlanner(llm=fake_llm).plan(thesis)
+    conds = plans[0].payload["filters"]["conditions"]
+    # original `in` replaced by two paired conditions
+    ops_values = sorted((c["type"], c["value"]) for c in conds)
+    assert ops_values == [("=<", 500), ("=>", 50)]
+
+
+def test_query_planner_drops_conditions_with_null_values(thesis):
+    """`is_not_null` / null-valued conditions are not supported by Crustdata —
+    drop them silently rather than emitting a request that 400s."""
+
+    def fake_llm(system, user):
+        return json.dumps(
+            [
+                {
+                    "endpoint": "/company/search",
+                    "track": "design_partner",
+                    "payload": {
+                        "filters": {
+                            "op": "and",
+                            "conditions": [
+                                {"field": "taxonomy.professional_network_industry", "type": "=", "value": "Logistics"},
+                                {"field": "funding.last_round_type", "type": "is_not_null", "value": None},
+                            ],
+                        }
+                    },
+                    "rationale": "r",
+                }
+            ]
+        )
+
+    plans = QueryPlanner(llm=fake_llm).plan(thesis)
+    conds = plans[0].payload["filters"]["conditions"]
+    assert len(conds) == 1
+    assert conds[0]["field"] == "taxonomy.professional_network_industry"
+
+
+def test_query_planner_converts_list_on_bracket_dot_to_in(thesis):
+    """`[.]` (exact-token) with a list value is rejected by Crustdata —
+    only `in` / `not_in` accept lists. Convert `[.]+list` → `in+list`."""
+
+    def fake_llm(system, user):
+        return json.dumps(
+            [
+                {
+                    "endpoint": "/person/search",
+                    "track": "investor",
+                    "payload": {
+                        "filters": {
+                            "op": "and",
+                            "conditions": [
+                                {"field": "experience.employment_details.company_name",
+                                 "type": "[.]", "value": ["Sequoia", "Accel"]},
+                                {"field": "experience.employment_details.title",
+                                 "type": "(.)", "value": ["Partner", "Principal"]},
+                            ],
+                        }
+                    },
+                    "rationale": "r",
+                }
+            ]
+        )
+
+    plans = QueryPlanner(llm=fake_llm).plan(thesis)
+    conds = plans[0].payload["filters"]["conditions"]
+    # `[.]` + list → `in` + same list
+    assert conds[0]["type"] == "in"
+    assert conds[0]["value"] == ["Sequoia", "Accel"]
+    # `(.)` + list → `(.)` + pipe-joined string (fuzzy regex)
+    assert conds[1]["type"] == "(.)"
+    assert conds[1]["value"] == "Partner|Principal"
+
+
 def test_query_planner_system_prompt_contains_filter_schema(thesis):
     captured: dict[str, str] = {}
 
