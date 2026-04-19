@@ -1,4 +1,4 @@
-import type { MatchResult, StageEvent } from "./types";
+import type { LogEvent, MatchResult, StageEvent } from "./types";
 
 export const API_BASE =
   (typeof process !== "undefined" && process.env.NEXT_PUBLIC_API_BASE) ||
@@ -32,6 +32,7 @@ export async function startMatch(
 
 export interface SseHandlers {
   onStage?: (e: StageEvent) => void;
+  onLog?: (e: LogEvent) => void;
   onResult?: (r: MatchResult) => void;
   onError?: (message: string) => void;
   onClose?: () => void;
@@ -54,6 +55,15 @@ export function subscribeEvents(
       handlers.onStage?.(data);
     } catch (err) {
       handlers.onError?.(`bad stage payload: ${String(err)}`);
+    }
+  });
+
+  es.addEventListener("log", (evt) => {
+    try {
+      const data = JSON.parse((evt as MessageEvent).data) as LogEvent;
+      handlers.onLog?.(data);
+    } catch (err) {
+      handlers.onError?.(`bad log payload: ${String(err)}`);
     }
   });
 

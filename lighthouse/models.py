@@ -60,6 +60,14 @@ class StageEvent(BaseModel):
     payload: dict[str, Any] | None = None
 
 
+class LogEvent(BaseModel):
+    """Free-form trace line for streaming pipeline activity to clients."""
+
+    message: str
+    level: Literal["info", "warn", "error"] = "info"
+    stage: str | None = None
+
+
 class ReQueryRequest(BaseModel):
     track: str
     reason: str

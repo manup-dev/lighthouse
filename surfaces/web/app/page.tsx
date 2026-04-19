@@ -8,6 +8,7 @@ import FunnelViz from "@/components/FunnelViz";
 import PersonCard from "@/components/PersonCard";
 import HowWeSearched from "@/components/HowWeSearched";
 import InputForm from "@/components/InputForm";
+import LogConsole, { type LogLine } from "@/components/LogConsole";
 
 import { DEMO_MATCH } from "@/lib/demo";
 import { startMatch, subscribeEvents } from "@/lib/api";
@@ -61,6 +62,8 @@ export default function Home() {
   const [runId, setRunId] = useState<string>("init");
   const [activeTab, setActiveTab] = useState<Track>("investor");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [logs, setLogs] = useState<LogLine[]>([]);
+  const logSeq = useRef(0);
   const reduced = useReducedMotion();
 
   // Timers from the demo simulation — cleared on unmount or new run.
@@ -120,6 +123,8 @@ export default function Home() {
       setActive(null);
       setCompleted(new Set());
       setErrorMsg(null);
+      setLogs([]);
+      logSeq.current = 0;
       setState("running");
       setRunId(`${Date.now()}`);
 
@@ -142,6 +147,12 @@ export default function Home() {
               });
               setActive((cur) => (cur === evt.stage ? null : cur));
             }
+          },
+          onLog: (evt) => {
+            setLogs((prev) => [
+              ...prev,
+              { ...evt, id: logSeq.current++, ts: Date.now() },
+            ]);
           },
           onResult: (r) => {
             setResult(r);
@@ -369,6 +380,9 @@ export default function Home() {
           or any public repo to see a demo run.
         </div>
       )}
+
+      {/* live backend trace */}
+      <LogConsole logs={logs} running={isRunning} />
     </main>
   );
 }

@@ -60,3 +60,9 @@ export interface StageEvent {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   payload?: Record<string, any>;
 }
+
+export interface LogEvent {
+  message: string;
+  level: "info" | "warn" | "error";
+  stage: PipelineStage | null;
+}

@@ -106,6 +106,33 @@ async def test_get_events_emits_stage_and_result(api_app):
         assert len(result_payload["investors"]) >= 1
 
 
+async def test_get_events_includes_log_events(api_app):
+    """SSE stream must surface `log` events alongside stage/result."""
+    async with httpx.AsyncClient(transport=ASGITransport(app=api_app), base_url="http://test", timeout=30.0) as c:
+        created = await c.post("/match", json={"repo_url": "tests/fixtures/repos/demo_repo"})
+        mid = created.json()["match_id"]
+
+        log_messages: list[str] = []
+        async with c.stream("GET", f"/match/{mid}/events") as stream:
+            current_event = None
+            async for line in stream.aiter_lines():
+                if not line:
+                    continue
+                if line.startswith("event:"):
+                    current_event = line.split(":", 1)[1].strip()
+                elif line.startswith("data:"):
+                    data_str = line.split(":", 1)[1].strip()
+                    if current_event == "log":
+                        log_messages.append(json.loads(data_str)["message"])
+                    elif current_event == "result":
+                        break
+
+    assert len(log_messages) > 0
+    joined = " | ".join(m.lower() for m in log_messages)
+    assert "thesis" in joined
+    assert "rank" in joined
+
+
 async def test_get_events_for_unknown_match_id_returns_404(api_app):
     async with httpx.AsyncClient(transport=ASGITransport(app=api_app), base_url="http://test") as c:
         resp = await c.get("/match/does-not-exist/events")

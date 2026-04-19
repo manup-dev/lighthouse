@@ -4,7 +4,7 @@ from typing import Any
 import pytest
 
 from lighthouse.analyzer import RepoAnalyzer
-from lighthouse.models import MatchResult, StageEvent
+from lighthouse.models import LogEvent, MatchResult, StageEvent
 from lighthouse.pipeline import Pipeline
 
 
@@ -155,6 +155,34 @@ async def test_pipeline_stats_include_counts_and_duration():
     assert result.stats["duration_sec"] >= 0
     assert "candidate_counts" in result.stats
     assert result.stats["candidate_counts"]["investor"] >= 1
+
+
+async def test_pipeline_emits_log_events_with_trace_detail():
+    """The pipeline should emit free-form log lines via `on_log` covering each
+    LLM call and each Crustdata fan-out result."""
+    llm = _make_llm_router()
+    crust = FakeCrustClient()
+    logs: list[LogEvent] = []
+
+    await Pipeline(llm=llm, crust=crust).run(
+        repo_url="tests/fixtures/repos/demo_repo",
+        on_log=logs.append,
+    )
+
+    assert len(logs) > 0
+    for e in logs:
+        assert isinstance(e, LogEvent)
+        assert e.message  # non-empty
+
+    joined = " | ".join(e.message.lower() for e in logs)
+
+    # At minimum: analyzer, thesis LLM, query plan LLM, crust results, rank calls, outreach
+    assert "analys" in joined or "analyz" in joined
+    assert "thesis" in joined
+    assert "query plan" in joined or "planner" in joined
+    assert "crust" in joined or "/person/search" in joined or "/company/search" in joined
+    assert "rank" in joined
+    assert "outreach" in joined or "draft" in joined
 
 
 async def test_pipeline_stats_expose_provider_and_model_from_llm():

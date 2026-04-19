@@ -17,7 +17,7 @@ from sse_starlette.sse import EventSourceResponse
 from lighthouse.cli import _DryRunCrust
 from lighthouse.crust_client import CrustClient
 from lighthouse.llm import make_llm
-from lighthouse.models import MatchResult, StageEvent
+from lighthouse.models import LogEvent, MatchResult, StageEvent
 from lighthouse.pipeline import Pipeline
 
 _DONE_SENTINEL = ("__done__", None)
@@ -83,10 +83,16 @@ async def create_match(req: MatchRequest) -> dict[str, str]:
     def on_event(ev: StageEvent) -> None:
         job.queue.put_nowait(("stage", ev))
 
+    def on_log(ev: LogEvent) -> None:
+        job.queue.put_nowait(("log", ev))
+
     async def run() -> None:
         try:
             result = await pipeline.run(
-                req.repo_url, location=req.location, on_event=on_event
+                req.repo_url,
+                location=req.location,
+                on_event=on_event,
+                on_log=on_log,
             )
             job.result = result
             job.queue.put_nowait(("result", result))
@@ -113,6 +119,8 @@ async def match_events(match_id: str) -> EventSourceResponse:
                 break
             if kind == "stage":
                 yield {"event": "stage", "data": payload.model_dump_json()}
+            elif kind == "log":
+                yield {"event": "log", "data": payload.model_dump_json()}
             elif kind == "result":
                 yield {"event": "result", "data": payload.model_dump_json()}
             elif kind == "error":
