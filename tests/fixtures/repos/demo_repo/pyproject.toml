@@ -1,0 +1,8 @@
+[project]
+name = "freightflow"
+version = "0.1.0"
+dependencies = [
+  "fastapi>=0.111",
+  "httpx>=0.27",
+  "ortools>=9.9",
+]
