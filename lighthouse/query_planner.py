@@ -11,6 +11,27 @@ LLM = Callable[[str, str], str]
 
 SYSTEM_PROMPT_PATH = Path(__file__).parent / "prompts" / "query_planner.md"
 
+_OPERATOR_FIXES = {
+    "<=": "=<",
+    ">=": "=>",
+    "=~": "(.)",
+    "~=": "(.)",
+}
+
+
+def _normalize_operators(node):
+    """Walk the filter tree and fix common LLM operator mistakes in-place."""
+    if isinstance(node, dict):
+        op = node.get("type")
+        if isinstance(op, str) and op in _OPERATOR_FIXES:
+            node["type"] = _OPERATOR_FIXES[op]
+        for value in node.values():
+            _normalize_operators(value)
+    elif isinstance(node, list):
+        for item in node:
+            _normalize_operators(item)
+    return node
+
 
 class QueryPlanner:
     def __init__(self, llm: LLM):
@@ -30,4 +51,6 @@ class QueryPlanner:
             raise ValueError(f"QueryPlanner: LLM did not return valid JSON: {exc}") from exc
         if not isinstance(items, list):
             raise ValueError(f"QueryPlanner: expected JSON array, got {type(items).__name__}")
+        for item in items:
+            _normalize_operators(item.get("payload"))
         return [CrustQueryPlan(**item) for item in items]

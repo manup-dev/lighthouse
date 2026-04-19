@@ -146,6 +146,42 @@ def test_query_planner_rejects_invalid_endpoint(thesis):
         QueryPlanner(llm=fake_llm).plan(thesis)
 
 
+def test_query_planner_normalizes_operator_shortcuts(thesis):
+    """qwen/GPT-style outputs often use `<=`, `>=`, `=~` — map them to Crustdata's `=<`, `=>`, `(.)`."""
+
+    def fake_llm(system, user):
+        return json.dumps(
+            [
+                {
+                    "endpoint": "/company/search",
+                    "track": "design_partner",
+                    "payload": {
+                        "filters": {
+                            "op": "and",
+                            "conditions": [
+                                {"field": "headcount.total", "type": "<=", "value": 500},
+                                {"field": "headcount.total", "type": ">=", "value": 50},
+                                {
+                                    "op": "or",
+                                    "conditions": [
+                                        {"field": "title", "type": "=~", "value": "Partner|GP"},
+                                    ],
+                                },
+                            ],
+                        }
+                    },
+                    "rationale": "r",
+                }
+            ]
+        )
+
+    plans = QueryPlanner(llm=fake_llm).plan(thesis)
+    conds = plans[0].payload["filters"]["conditions"]
+    assert conds[0]["type"] == "=<"
+    assert conds[1]["type"] == "=>"
+    assert conds[2]["conditions"][0]["type"] == "(.)"
+
+
 def test_query_planner_system_prompt_contains_filter_schema(thesis):
     captured: dict[str, str] = {}
 
