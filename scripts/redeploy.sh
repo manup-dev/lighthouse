@@ -273,11 +273,27 @@ start_web() {
 }
 
 # ---- ollama sanity --------------------------------------------------------
+# Also probes nvidia-smi so a wedged driver is surfaced *before* servers
+# start hammering Ollama. Silent CPU-fallback is the #1 thing we want to
+# catch here — it looks "working" from Ollama's POV but runs ~10× slower
+# and can OOM the host.
 check_ollama() {
   if curl -fsS --max-time 2 http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
     echo "  ✓ ollama reachable on 127.0.0.1:11434"
   else
     echo "  ⚠ ollama not reachable on 127.0.0.1:11434 — LLM calls will fail"
+    return
+  fi
+  # GPU probe is advisory — don't abort redeploy on a bad GPU, the 3B CPU
+  # default still works. Just warn loud so the user isn't surprised later.
+  if command -v nvidia-smi >/dev/null 2>&1; then
+    if nvidia-smi -L 2>/dev/null | grep -q GPU; then
+      echo "  ✓ nvidia-smi sees GPU"
+    else
+      echo "  ⚠ nvidia-smi cannot see a GPU — driver wedged (Unknown Error?)"
+      echo "    Ollama will fall back to CPU; 14B-q4 will be unusably slow."
+      echo "    Fix: sudo ./scripts/redeploy.sh gpu-reset  (or gpu-pci-reset)"
+    fi
   fi
 }
 

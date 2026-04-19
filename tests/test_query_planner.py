@@ -325,6 +325,208 @@ def test_query_planner_converts_list_on_bracket_dot_to_in(thesis):
     }
 
 
+def test_query_planner_normalizes_double_equals_to_single(thesis):
+    """Small LLMs (qwen 3B) sometimes emit `==` from Python/JS habit — Crustdata
+    rejects anything but `=`. Catch it alongside the other operator shortcuts."""
+
+    def fake_llm(system, user):
+        return json.dumps(
+            [
+                {
+                    "endpoint": "/company/search",
+                    "track": "design_partner",
+                    "payload": {
+                        "filters": {
+                            "op": "and",
+                            "conditions": [
+                                {"field": "taxonomy.professional_network_industry", "type": "==", "value": "AI infrastructure"},
+                            ],
+                        }
+                    },
+                    "rationale": "r",
+                }
+            ]
+        )
+
+    plans = QueryPlanner(llm=fake_llm).plan(thesis)
+    conds = plans[0].payload["filters"]["conditions"]
+    assert conds[0]["type"] == "="
+
+
+def test_query_planner_injects_missing_outer_op_in_filters(thesis):
+    """Observed in 3B output: `filters: {conditions: [...]}` with no top-level
+    `op`. Crustdata then rejects with "Missing required field: 'filters.op'"
+    (along with a pile of other missing-field errors). Default to "and"."""
+
+    def fake_llm(system, user):
+        return json.dumps(
+            [
+                {
+                    "endpoint": "/person/search",
+                    "track": "investor",
+                    "payload": {
+                        "filters": {
+                            "conditions": [
+                                {"field": "experience.employment_details.title", "type": "=", "value": "Partner"},
+                            ],
+                        }
+                    },
+                    "rationale": "r",
+                }
+            ]
+        )
+
+    plans = QueryPlanner(llm=fake_llm).plan(thesis)
+    assert plans[0].payload["filters"]["op"] == "and"
+
+
+def test_query_planner_wraps_leaf_shaped_root_filters_in_compound(thesis):
+    """Another 3B variant: filters is emitted as a single leaf at the root
+    (`{field, type, value}`) instead of wrapped in `{op, conditions: [...]}`.
+    Wrap it rather than dropping so the query still runs."""
+
+    def fake_llm(system, user):
+        return json.dumps(
+            [
+                {
+                    "endpoint": "/person/search",
+                    "track": "talent",
+                    "payload": {
+                        "filters": {
+                            "field": "experience.employment_details.title",
+                            "type": "(.)",
+                            "value": "Staff Engineer",
+                        }
+                    },
+                    "rationale": "r",
+                }
+            ]
+        )
+
+    plans = QueryPlanner(llm=fake_llm).plan(thesis)
+    filters = plans[0].payload["filters"]
+    assert filters["op"] == "and"
+    assert len(filters["conditions"]) == 1
+    assert filters["conditions"][0]["field"] == "experience.employment_details.title"
+
+
+def test_query_planner_wraps_list_root_filters_in_compound(thesis):
+    """`filters: [leaf1, leaf2]` (LLM forgot the outer wrapper entirely) gets
+    wrapped into `{op: "and", conditions: [...]}`."""
+
+    def fake_llm(system, user):
+        return json.dumps(
+            [
+                {
+                    "endpoint": "/person/search",
+                    "track": "investor",
+                    "payload": {
+                        "filters": [
+                            {"field": "experience.employment_details.title", "type": "=", "value": "Partner"},
+                            {"field": "basic_profile.location.country", "type": "=", "value": "DE"},
+                        ]
+                    },
+                    "rationale": "r",
+                }
+            ]
+        )
+
+    plans = QueryPlanner(llm=fake_llm).plan(thesis)
+    filters = plans[0].payload["filters"]
+    assert filters["op"] == "and"
+    assert len(filters["conditions"]) == 2
+
+
+def test_query_planner_derives_query_for_web_search_when_missing(thesis):
+    """3B frequently builds a filter-tree for /web/search/live instead of the
+    required `{query, time_range}` shape. Crustdata 400s with "query: required".
+    Salvage by extracting string values from whatever filter tree the LLM
+    produced and using them as the search text."""
+
+    def fake_llm(system, user):
+        return json.dumps(
+            [
+                {
+                    "endpoint": "/web/search/live",
+                    "track": "investor",
+                    "payload": {
+                        "filters": {
+                            "op": "and",
+                            "conditions": [
+                                {"field": "content.text", "type": "in",
+                                 "value": ["vector search", "rust databases"]},
+                            ],
+                        }
+                    },
+                    "rationale": "r",
+                }
+            ]
+        )
+
+    plans = QueryPlanner(llm=fake_llm).plan(thesis)
+    assert len(plans) == 1
+    payload = plans[0].payload
+    # filters doesn't belong on web search — must be stripped so Crustdata accepts it
+    assert "filters" not in payload
+    assert payload["time_range"] == "14d"
+    assert "vector search" in payload["query"]
+
+
+def test_query_planner_drops_web_search_when_no_query_derivable(thesis):
+    """If we can't salvage any query text from a malformed web-search plan,
+    drop it rather than sending a guaranteed-400 request."""
+
+    def fake_llm(system, user):
+        return json.dumps(
+            [
+                {
+                    "endpoint": "/web/search/live",
+                    "track": "talent",
+                    "payload": {"filters": {}},  # nothing useful
+                    "rationale": "r",
+                },
+                # A well-formed non-web plan alongside — must survive.
+                {
+                    "endpoint": "/person/search",
+                    "track": "investor",
+                    "payload": {
+                        "filters": {
+                            "op": "and",
+                            "conditions": [
+                                {"field": "experience.employment_details.title", "type": "=", "value": "Partner"},
+                            ],
+                        }
+                    },
+                    "rationale": "r",
+                },
+            ]
+        )
+
+    plans = QueryPlanner(llm=fake_llm).plan(thesis)
+    endpoints = [p.endpoint for p in plans]
+    assert "/web/search/live" not in endpoints
+    assert "/person/search" in endpoints
+
+
+def test_query_planner_preserves_existing_web_search_query(thesis):
+    """Well-formed /web/search/live plans must pass through untouched."""
+
+    def fake_llm(system, user):
+        return json.dumps(
+            [
+                {
+                    "endpoint": "/web/search/live",
+                    "track": "investor",
+                    "payload": {"query": "last-mile logistics", "time_range": "14d"},
+                    "rationale": "r",
+                }
+            ]
+        )
+
+    plans = QueryPlanner(llm=fake_llm).plan(thesis)
+    assert plans[0].payload == {"query": "last-mile logistics", "time_range": "14d"}
+
+
 def test_query_planner_system_prompt_contains_filter_schema(thesis):
     captured: dict[str, str] = {}
 
