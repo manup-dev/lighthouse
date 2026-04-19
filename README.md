@@ -12,6 +12,10 @@ Every one of the fifteen comes with a warm-intro draft **grounded in something t
 
 ![Lighthouse hero](lighthouse-dark-hero.png)
 
+<!-- LIVE_URL:START -->
+**Try it live:** https://erp-auction-excluding-lite.trycloudflare.com _(last updated 2026-04-19)_
+<!-- LIVE_URL:END -->
+
 ---
 
 ## Hosting — this is running on my laptop

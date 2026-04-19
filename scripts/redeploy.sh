@@ -321,6 +321,37 @@ kill_stale_tunnel() {
   fi
 }
 
+update_readme_url() {
+  local url=$1
+  local readme="$ROOT/README.md"
+  [[ -f "$readme" ]] || return 0
+  grep -q "LIVE_URL:START" "$readme" || return 0
+  local today
+  today=$(date +%Y-%m-%d)
+  python3 - "$readme" "$url" "$today" <<'PY'
+import re, sys
+path, url, today = sys.argv[1], sys.argv[2], sys.argv[3]
+with open(path) as f:
+    src = f.read()
+block = (
+    f"<!-- LIVE_URL:START -->\n"
+    f"**Try it live:** {url} _(last updated {today})_\n"
+    f"<!-- LIVE_URL:END -->"
+)
+out = re.sub(
+    r"<!-- LIVE_URL:START -->.*?<!-- LIVE_URL:END -->",
+    block,
+    src,
+    count=1,
+    flags=re.DOTALL,
+)
+if out != src:
+    with open(path, "w") as f:
+        f.write(out)
+PY
+  echo "  ↳ README live-URL block updated"
+}
+
 start_tunnel() {
   ensure_cloudflared || return 1
   kill_stale_tunnel
@@ -345,6 +376,7 @@ start_tunnel() {
     if [[ -n "$url" ]]; then
       echo "$url" > "$TUNNEL_URL_FILE"
       echo "  ✓ public URL: $url"
+      update_readme_url "$url" || true
       return 0
     fi
     sleep 0.5
