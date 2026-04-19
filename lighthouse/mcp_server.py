@@ -8,6 +8,7 @@ and returns the ``MatchResult`` as indented JSON text.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from typing import Any
 
@@ -18,6 +19,7 @@ from mcp.types import TextContent, Tool
 
 from lighthouse.cli import _DryRunCrust
 from lighthouse.crust_client import CrustClient
+from lighthouse.jd_matcher import JDMatcher
 from lighthouse.llm import make_llm
 from lighthouse.pipeline import Pipeline
 
@@ -41,6 +43,26 @@ TOOL_INPUT_SCHEMA: dict[str, Any] = {
     "required": ["repo_url"],
 }
 
+JD_TOOL_NAME = "lighthouse_candidates_for_jd"
+JD_TOOL_DESCRIPTION = (
+    "Recruiter mode: given a job description, return ranked senior hires with "
+    "warm-intro drafts grounded in their recent public posts."
+)
+JD_TOOL_INPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "jd": {
+            "type": "string",
+            "description": "Free-form job description text",
+        },
+        "location": {
+            "type": "string",
+            "description": "City for geo_distance filter, default Bangalore",
+        },
+    },
+    "required": ["jd"],
+}
+
 
 def _build_crust() -> Any:
     """Return a real CrustClient if CRUSTDATA_API_KEY is set, else a dry-run stub."""
@@ -53,6 +75,11 @@ def _build_crust() -> Any:
 def _build_pipeline(llm: Any, crust: Any) -> Pipeline:
     """Pipeline factory. Patched in tests to inject a fake pipeline."""
     return Pipeline(llm=llm, crust=crust)
+
+
+def _build_jd_matcher(llm: Any, crust: Any) -> JDMatcher:
+    """JDMatcher factory. Patched in tests to inject a fake matcher."""
+    return JDMatcher(llm=llm, crust=crust)
 
 
 def build_server() -> Server:
@@ -69,21 +96,41 @@ def build_server() -> Server:
                 name=TOOL_NAME,
                 description=TOOL_DESCRIPTION,
                 inputSchema=TOOL_INPUT_SCHEMA,
-            )
+            ),
+            Tool(
+                name=JD_TOOL_NAME,
+                description=JD_TOOL_DESCRIPTION,
+                inputSchema=JD_TOOL_INPUT_SCHEMA,
+            ),
         ]
 
     @server.call_tool()
     async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
-        if name != TOOL_NAME:
-            raise ValueError(f"unknown tool: {name!r}")
-        repo_url = arguments["repo_url"]
-        location = arguments.get("location") or "Bangalore"
+        if name == TOOL_NAME:
+            repo_url = arguments["repo_url"]
+            location = arguments.get("location") or "Bangalore"
 
-        llm = make_llm()
-        crust = _build_crust()
-        pipeline = _build_pipeline(llm, crust)
-        result = await pipeline.run(repo_url, location=location)
-        return [TextContent(type="text", text=result.model_dump_json(indent=2))]
+            llm = make_llm()
+            crust = _build_crust()
+            pipeline = _build_pipeline(llm, crust)
+            result = await pipeline.run(repo_url, location=location)
+            return [TextContent(type="text", text=result.model_dump_json(indent=2))]
+
+        if name == JD_TOOL_NAME:
+            jd = arguments["jd"]
+            location = arguments.get("location") or "Bangalore"
+
+            llm = make_llm()
+            crust = _build_crust()
+            matcher = _build_jd_matcher(llm, crust)
+            candidates = await matcher.match(jd=jd, location=location)
+            payload = {
+                "candidates": [c.model_dump() for c in candidates],
+                "location": location,
+            }
+            return [TextContent(type="text", text=json.dumps(payload, indent=2))]
+
+        raise ValueError(f"unknown tool: {name!r}")
 
     # Attach handlers to the server object so tests can reach them by name.
     server._lighthouse_list_tools = list_tools  # type: ignore[attr-defined]
