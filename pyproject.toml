@@ -39,6 +39,9 @@ lighthouse-mcp = "lighthouse.mcp_server:main"
 include = ["lighthouse*"]
 exclude = ["tests*"]
 
+[tool.setuptools.package-data]
+lighthouse = ["prompts/*.md"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
