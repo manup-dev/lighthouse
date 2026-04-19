@@ -1,0 +1,72 @@
+# One-command local stack: `docker compose up --build`.
+#   web  → http://localhost:3737  (the thing humans hit)
+#   api  → http://localhost:8787  (FastAPI; web proxies /api/* here)
+#   ollama → http://localhost:11434  (local LLM, started under `local-llm` profile)
+#
+# Anthropic by default (set ANTHROPIC_API_KEY + LIGHTHOUSE_LLM=anthropic in .env).
+# For fully-local inference run: `docker compose --profile local-llm up --build`
+# and set LIGHTHOUSE_LLM=ollama + OLLAMA_BASE_URL=http://ollama:11434 in .env.
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
+    image: lighthouse-api:local
+    environment:
+      LIGHTHOUSE_HOST: 0.0.0.0
+      LIGHTHOUSE_PORT: "8787"
+      LIGHTHOUSE_LLM: ${LIGHTHOUSE_LLM:-anthropic}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:3b-instruct-q4_K_M}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-sonnet-4-6}
+      CRUSTDATA_API_KEY: ${CRUSTDATA_API_KEY:-}
+      LIGHTHOUSE_QUEUE_MAX_DEPTH: ${LIGHTHOUSE_QUEUE_MAX_DEPTH:-20}
+      LIGHTHOUSE_ETA_SEC: ${LIGHTHOUSE_ETA_SEC:-60}
+    ports:
+      - "127.0.0.1:${API_HOST_PORT:-8787}:8787"
+    volumes:
+      - api_cache:/app/.cache
+    restart: unless-stopped
+    networks: [lighthouse]
+
+  web:
+    build:
+      context: .
+      dockerfile: docker/web.Dockerfile
+      args:
+        LIGHTHOUSE_API_ORIGIN: http://api:8787
+    image: lighthouse-web:local
+    environment:
+      LIGHTHOUSE_API_ORIGIN: http://api:8787
+      PORT: "3737"
+      HOSTNAME: 0.0.0.0
+    ports:
+      - "${WEB_HOST_PORT:-3737}:3737"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [lighthouse]
+
+  ollama:
+    # Started only when you pass `--profile local-llm`. Without GPU passthrough
+    # this runs on CPU — fine for the 3B model, painful for 14B. See README for
+    # how to wire NVIDIA devices through to this container.
+    image: ollama/ollama:latest
+    profiles: ["local-llm"]
+    ports:
+      - "127.0.0.1:11434:11434"
+    volumes:
+      - ollama_models:/root/.ollama
+    restart: unless-stopped
+    networks: [lighthouse]
+
+volumes:
+  api_cache:
+  ollama_models:
+
+networks:
+  lighthouse:
+    driver: bridge

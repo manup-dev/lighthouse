@@ -13,7 +13,7 @@ Every one of the fifteen comes with a warm-intro draft **grounded in something t
 ![Lighthouse hero](lighthouse-dark-hero.png)
 
 <!-- LIVE_URL:START -->
-**Try it live:** https://erp-auction-excluding-lite.trycloudflare.com _(last updated 2026-04-19)_
+**Try it live:** https://prices-bargains-purse-bedrooms.trycloudflare.com _(last updated 2026-04-19)_
 <!-- LIVE_URL:END -->
 
 ---
@@ -40,6 +40,14 @@ Only the Next.js port is exposed. **FastAPI and Ollama stay on loopback** — th
 ```bash
 ./scripts/redeploy.sh --tunnel     # api + web + public URL
 ./scripts/post-reboot.sh           # same, plus GPU warm + gallery bake
+```
+
+Prefer containers? The whole stack is dockerised:
+
+```bash
+cp .env.example .env               # fill in ANTHROPIC_API_KEY + CRUSTDATA_API_KEY
+docker compose up --build          # api :8787 · web :3737
+docker compose --profile local-llm up --build   # …also boots Ollama on :11434
 ```
 
 Anthropic is available as an opt-in primary with a spend cap (`LIGHTHOUSE_LLM=budgeted`, `LIGHTHOUSE_ANTHROPIC_BUDGET_USD=5`) — it auto-falls-back to local Qwen once the cap trips or the call fails, so the demo cannot silently drain a key.
