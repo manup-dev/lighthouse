@@ -9,6 +9,7 @@ import PersonCard from "@/components/PersonCard";
 import HowWeSearched from "@/components/HowWeSearched";
 import InputForm from "@/components/InputForm";
 import LogConsole, { type LogLine } from "@/components/LogConsole";
+import RunBanner from "@/components/RunBanner";
 import TopNav from "@/components/TopNav";
 import RotatingWord from "@/components/RotatingWord";
 import Logo from "@/components/Logo";
@@ -76,6 +77,16 @@ export default function Home() {
   const [logs, setLogs] = useState<LogLine[]>([]);
   // Tracks that have been progressively "revealed" after a result arrives.
   const [readyTracks, setReadyTracks] = useState<Set<Track>>(new Set());
+  const [runStartedAt, setRunStartedAt] = useState<number | null>(null);
+  const [notifyPerm, setNotifyPerm] = useState<NotificationPermission | "unsupported">(
+    () => {
+      if (typeof window === "undefined" || !("Notification" in window)) {
+        return "unsupported";
+      }
+      return Notification.permission;
+    },
+  );
+  const [notifyPending, setNotifyPending] = useState(false);
   const logSeq = useRef(0);
   const reduced = useReducedMotion();
 
@@ -175,6 +186,7 @@ export default function Home() {
       setLogs([]);
       logSeq.current = 0;
       setState("running");
+      setRunStartedAt(Date.now());
       setRunId(`${Date.now()}`);
 
       // Try the real API first — but never block the demo if it's down.
@@ -210,6 +222,24 @@ export default function Home() {
             scheduleProgressiveReveal();
             sseCleanup.current?.();
             sseCleanup.current = null;
+            // Fire a browser notification if the user opted in and the tab isn't focused.
+            if (
+              typeof window !== "undefined" &&
+              "Notification" in window &&
+              Notification.permission === "granted" &&
+              document.visibilityState !== "visible"
+            ) {
+              const total =
+                r.investors.length + r.design_partners.length + r.talent.length;
+              try {
+                new Notification("Lighthouse — research ready", {
+                  body: `${total} matches across investors, design partners & senior hires.`,
+                  tag: "lighthouse-done",
+                });
+              } catch {
+                /* ignore — some browsers throw on missing icon etc. */
+              }
+            }
           },
           onError: (msg) => {
             setErrorMsg(msg);
@@ -225,6 +255,21 @@ export default function Home() {
 
   const isRunning = state === "running";
   const hasResult = result !== null;
+
+  const requestNotifyPermission = useCallback(async () => {
+    if (typeof window === "undefined" || !("Notification" in window)) return;
+    if (Notification.permission !== "default") {
+      setNotifyPerm(Notification.permission);
+      return;
+    }
+    setNotifyPending(true);
+    try {
+      const perm = await Notification.requestPermission();
+      setNotifyPerm(perm);
+    } finally {
+      setNotifyPending(false);
+    }
+  }, []);
 
   // Document title reflects the run state — the tab strip doubles as a status light.
   useEffect(() => {
@@ -313,6 +358,14 @@ export default function Home() {
           <div className="w-full max-w-2xl mt-2">
             <InputForm onSubmit={handleSubmit} disabled={isRunning} />
           </div>
+
+          <RunBanner
+            running={isRunning}
+            startedAt={runStartedAt}
+            notifyPermission={notifyPerm}
+            onRequestNotify={requestNotifyPermission}
+            notifyPending={notifyPending}
+          />
 
           {errorMsg && (
             <p className="text-xs text-amber-600 dark:text-amber-400">

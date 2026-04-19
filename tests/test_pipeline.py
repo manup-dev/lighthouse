@@ -185,6 +185,31 @@ async def test_pipeline_emits_log_events_with_trace_detail():
     assert "outreach" in joined or "draft" in joined
 
 
+async def test_pipeline_emits_pre_llm_fetching_log_with_provider_and_model():
+    """Before each LLM call, a log line should appear naming provider+model so
+    the UI can show what the pipeline is waiting on during slow local inference."""
+    llm = _make_llm_router()
+    llm.provider = "ollama"  # type: ignore[attr-defined]
+    llm.model = "qwen2.5:14b-instruct-q4_K_M"  # type: ignore[attr-defined]
+    crust = FakeCrustClient()
+    logs: list[LogEvent] = []
+
+    await Pipeline(llm=llm, crust=crust).run(
+        repo_url="tests/fixtures/repos/demo_repo",
+        on_log=logs.append,
+    )
+
+    fetching = [
+        e for e in logs
+        if "fetching" in e.message.lower() or "waiting on" in e.message.lower()
+    ]
+    # thesis + planner + 3 rankers + outreach = 6 LLM calls
+    assert len(fetching) >= 6, f"expected ≥6 fetching logs, got {len(fetching)}"
+    for e in fetching:
+        assert "ollama" in e.message.lower()
+        assert "qwen" in e.message.lower()
+
+
 async def test_pipeline_stats_expose_provider_and_model_from_llm():
     from lighthouse.llm import OllamaLLM
 

@@ -156,6 +156,31 @@ async def test_fan_out_routes_plans_to_correct_endpoints(client, respx_mock):
     assert by_track["talent"]["response"]["results"][0]["url"] == "u"
 
 
+async def test_fan_out_invokes_progress_callbacks_per_query(client, respx_mock):
+    respx_mock.post(f"{BASE}/person/search").mock(
+        return_value=httpx.Response(200, json={"results": []})
+    )
+    respx_mock.post(f"{BASE}/company/search").mock(
+        return_value=httpx.Response(200, json={"results": []})
+    )
+    plans = [
+        CrustQueryPlan(endpoint="/person/search", track="investor", payload={"filters": {}}, rationale="r1"),
+        CrustQueryPlan(endpoint="/company/search", track="design_partner", payload={"filters": {}}, rationale="r2"),
+    ]
+    started: list[tuple[int, str]] = []
+    finished: list[tuple[int, str, bool]] = []
+
+    await client.fan_out(
+        plans,
+        on_start=lambda i, p: started.append((i, p.endpoint)),
+        on_finish=lambda i, p, r, err: finished.append((i, p.endpoint, err is None)),
+    )
+
+    assert len(started) == 2
+    assert len(finished) == 2
+    assert {s[1] for s in started} == {"/person/search", "/company/search"}
+
+
 def test_dedup_people_by_linkedin_url():
     from lighthouse.crust_client import dedup_people
 

@@ -26,6 +26,51 @@ LogCallback = Callable[[LogEvent], None]
 _TRACKS = ("investor", "design_partner", "talent")
 
 
+class _TracingLLM:
+    """Wraps an LLM callable and emits a log line before/after every call.
+
+    The pipeline swaps in one of these per run so stages that would otherwise
+    hang silently on slow local inference surface as live traces ("waiting on
+    ollama/qwen…") in the UI.
+    """
+
+    def __init__(
+        self,
+        inner: Callable[[str, str], str],
+        on_log: LogCallback | None,
+    ):
+        self._inner = inner
+        self._on_log = on_log
+        self._stage: str | None = None
+        self.provider = getattr(inner, "provider", None)
+        self.model = getattr(inner, "model", None)
+
+    def set_stage(self, stage: str | None) -> None:
+        self._stage = stage
+
+    def __call__(self, system: str, user: str) -> str:
+        label = f"{self.provider or 'llm'}/{self.model or '?'}"
+        if self._on_log:
+            self._on_log(
+                LogEvent(
+                    message=f"→ waiting on {label} — fetching completion…",
+                    stage=self._stage,
+                )
+            )
+        t0 = time.monotonic()
+        out = self._inner(system, user)
+        elapsed = time.monotonic() - t0
+        if self._on_log:
+            n = len(out) if isinstance(out, str) else 0
+            self._on_log(
+                LogEvent(
+                    message=f"← {label} returned {n} chars in {elapsed:.1f}s",
+                    stage=self._stage,
+                )
+            )
+        return out
+
+
 class Pipeline:
     def __init__(
         self,
@@ -64,6 +109,13 @@ class Pipeline:
 
         log(f"Pipeline starting — provider={provider} model={model}", stage="pipeline")
 
+        # Wrap the LLM so every call emits pre/post traces; re-bind stages to use it.
+        traced = _TracingLLM(self.llm, on_log)
+        thesis_engine = ThesisEngine(traced)
+        query_planner = QueryPlanner(traced)
+        ranker = Ranker(traced)
+        outreach = OutreachDrafter(traced)
+
         emit("analyzer", "start")
         log(f"Analysing repo: {repo_url}", stage="analyzer")
         fingerprint = self.analyzer.analyze(repo_url)
@@ -79,14 +131,16 @@ class Pipeline:
         if user_hint:
             log(f"User hint: “{user_hint}”", stage="thesis")
         log("Calling LLM to extract venture thesis…", stage="thesis")
-        thesis = self.thesis_engine.extract(fingerprint, user_hint=user_hint)
+        traced.set_stage("thesis")
+        thesis = thesis_engine.extract(fingerprint, user_hint=user_hint)
         log(f"Thesis moat: “{thesis.moat}”", stage="thesis")
         log(f"Themes: {thesis.themes}", stage="thesis")
         emit("thesis", "done", {"moat": thesis.moat})
 
         emit("query_plan", "start")
         log("Calling LLM — query planner stage…", stage="query_plan")
-        plans = self.query_planner.plan(
+        traced.set_stage("query_plan")
+        plans = query_planner.plan(
             thesis, location=location, user_hint=user_hint
         )
         for p in plans:
@@ -94,17 +148,56 @@ class Pipeline:
         emit("query_plan", "done", {"count": len(plans)})
 
         emit("crust_fanout", "start", {"queries": len(plans)})
-        log(f"Fanning out {len(plans)} queries to Crustdata…", stage="crust_fanout")
-        raw_results = await self.crust.fan_out(plans)
-        for item in raw_results:
-            track = item.get("track")
-            endpoint = item.get("endpoint", "?")
-            err = item.get("error")
+        total = len(plans)
+        log(
+            f"Fanning out {total} queries to Crustdata — this usually takes ~30–60s…",
+            stage="crust_fanout",
+        )
+        done_count = {"n": 0}
+
+        def _on_start(i: int, plan: CrustQueryPlan) -> None:
+            log(
+                f"→ [{i + 1}/{total}] {plan.endpoint} [{plan.track}] — dispatching",
+                stage="crust_fanout",
+            )
+
+        def _on_finish(
+            i: int,
+            plan: CrustQueryPlan,
+            resp: dict | None,
+            err: str | None,
+        ) -> None:
+            done_count["n"] += 1
+            progress = f"({done_count['n']}/{total})"
             if err:
-                log(f"✗ {endpoint} [{track}] — {err}", level="warn", stage="crust_fanout")
+                log(
+                    f"✗ {plan.endpoint} [{plan.track}] {progress} — {err}",
+                    level="warn",
+                    stage="crust_fanout",
+                )
             else:
-                count = len((item.get("response") or {}).get("results") or [])
-                log(f"✓ {endpoint} [{track}] → {count} results", stage="crust_fanout")
+                count = len((resp or {}).get("results") or [])
+                log(
+                    f"✓ {plan.endpoint} [{plan.track}] {progress} → {count} results",
+                    stage="crust_fanout",
+                )
+
+        # Older CrustLike implementations (dry-run, mocks) may not accept callbacks.
+        try:
+            raw_results = await self.crust.fan_out(
+                plans, on_start=_on_start, on_finish=_on_finish
+            )
+        except TypeError:
+            raw_results = await self.crust.fan_out(plans)
+            for item in raw_results:
+                track = item.get("track")
+                endpoint = item.get("endpoint", "?")
+                err = item.get("error")
+                if err:
+                    log(f"✗ {endpoint} [{track}] — {err}", level="warn", stage="crust_fanout")
+                else:
+                    count = len((item.get("response") or {}).get("results") or [])
+                    log(f"✓ {endpoint} [{track}] → {count} results", stage="crust_fanout")
         candidates_by_track = self._group_candidates(raw_results)
         emit(
             "crust_fanout",
@@ -116,10 +209,11 @@ class Pipeline:
 
         emit("ranker", "start")
         ranked = {}
+        traced.set_stage("ranker")
         for track in _TRACKS:
             n_in = len(candidates_by_track.get(track, []))
             log(f"Ranking {track}: {n_in} candidates…", stage="ranker")
-            outcome = self.ranker.rank(
+            outcome = ranker.rank(
                 thesis,
                 candidates=candidates_by_track.get(track, []),
                 track=track,
@@ -134,7 +228,8 @@ class Pipeline:
 
         emit("outreach", "start")
         log("Drafting warm intros for all matches…", stage="outreach")
-        with_drafts = self.outreach.draft(thesis, ranked)
+        traced.set_stage("outreach")
+        with_drafts = outreach.draft(thesis, ranked)
         emit("outreach", "done")
 
         stats = {

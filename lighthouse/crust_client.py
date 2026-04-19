@@ -6,9 +6,14 @@ import json
 from pathlib import Path
 from typing import Any
 
+from typing import Callable
+
 import httpx
 
 from lighthouse.models import CrustQueryPlan
+
+OnStart = Callable[[int, CrustQueryPlan], None]
+OnFinish = Callable[[int, CrustQueryPlan, "dict | None", "str | None"], None]
 
 BASE_URL = "https://api.crustdata.com"
 API_VERSION = "2025-11-01"
@@ -63,20 +68,43 @@ class CrustClient:
     async def web_search_live(self, payload: dict) -> dict:
         return await self._post("/web/search/live", payload)
 
-    async def fan_out(self, plans: list[CrustQueryPlan]) -> list[dict[str, Any]]:
-        tasks = [self._post(p.endpoint, p.payload) for p in plans]
-        responses = await asyncio.gather(*tasks, return_exceptions=True)
-        out: list[dict[str, Any]] = []
-        for plan, resp in zip(plans, responses):
-            out.append(
-                {
-                    "track": plan.track,
-                    "endpoint": plan.endpoint,
-                    "rationale": plan.rationale,
-                    "response": resp if not isinstance(resp, Exception) else None,
-                    "error": str(resp) if isinstance(resp, Exception) else None,
-                }
-            )
+    async def fan_out(
+        self,
+        plans: list[CrustQueryPlan],
+        on_start: OnStart | None = None,
+        on_finish: OnFinish | None = None,
+    ) -> list[dict[str, Any]]:
+        async def _run_one(idx: int, plan: CrustQueryPlan) -> tuple[int, dict | None, str | None]:
+            if on_start:
+                try:
+                    on_start(idx, plan)
+                except Exception:  # noqa: BLE001 — callbacks must never break fan-out
+                    pass
+            try:
+                data = await self._post(plan.endpoint, plan.payload)
+                err: str | None = None
+            except Exception as exc:  # noqa: BLE001
+                data = None
+                err = str(exc)
+            if on_finish:
+                try:
+                    on_finish(idx, plan, data, err)
+                except Exception:  # noqa: BLE001
+                    pass
+            return idx, data, err
+
+        tasks = [_run_one(i, p) for i, p in enumerate(plans)]
+        results = await asyncio.gather(*tasks)
+        out: list[dict[str, Any]] = [None] * len(plans)  # type: ignore[list-item]
+        for idx, data, err in results:
+            plan = plans[idx]
+            out[idx] = {
+                "track": plan.track,
+                "endpoint": plan.endpoint,
+                "rationale": plan.rationale,
+                "response": data,
+                "error": err,
+            }
         return out
 
     async def _post(self, endpoint: str, payload: dict) -> dict:
