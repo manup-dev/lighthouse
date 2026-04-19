@@ -51,7 +51,7 @@ class CompanyCandidate(BaseModel):
 class MatchedPerson(PersonCandidate):
     score: float
     sub_scores: dict[str, float]
-    warm_intro_draft: str
+    warm_intro_draft: str = ""
 
 
 class StageEvent(BaseModel):
