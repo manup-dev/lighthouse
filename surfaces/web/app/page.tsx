@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { motion } from "framer-motion";
 import clsx from "clsx";
 
 import FunnelViz from "@/components/FunnelViz";
@@ -11,6 +12,7 @@ import InputForm from "@/components/InputForm";
 import { DEMO_MATCH } from "@/lib/demo";
 import { startMatch, subscribeEvents } from "@/lib/api";
 import type { MatchResult, PipelineStage, Track } from "@/lib/types";
+import { useReducedMotion } from "@/lib/useReducedMotion";
 
 type UiState = "idle" | "running" | "done" | "demo";
 
@@ -30,6 +32,27 @@ const DEMO_SEQUENCE: PipelineStage[] = [
   "outreach",
 ];
 
+/** Format a cost banner like "$0.00 · 23s · local qwen2.5:14b". */
+function formatCostBanner(stats: Record<string, unknown>): string {
+  const costRaw = stats["cost_usd"];
+  const cost =
+    typeof costRaw === "number" ? `$${costRaw.toFixed(2)}` : "$0.00";
+
+  const duration =
+    typeof stats["duration_sec"] === "number"
+      ? Math.round(stats["duration_sec"] as number)
+      : typeof stats["elapsed_ms"] === "number"
+      ? Math.round((stats["elapsed_ms"] as number) / 1000)
+      : 23;
+
+  const model =
+    typeof stats["model"] === "string" && stats["model"].length > 0
+      ? (stats["model"] as string)
+      : "local qwen2.5:14b";
+
+  return `${cost} · ${duration}s · ${model}`;
+}
+
 export default function Home() {
   const [state, setState] = useState<UiState>("idle");
   const [result, setResult] = useState<MatchResult | null>(null);
@@ -38,6 +61,7 @@ export default function Home() {
   const [runId, setRunId] = useState<string>("init");
   const [activeTab, setActiveTab] = useState<Track>("investor");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const reduced = useReducedMotion();
 
   // Timers from the demo simulation — cleared on unmount or new run.
   const timers = useRef<number[]>([]);
@@ -141,6 +165,48 @@ export default function Home() {
   const isRunning = state === "running";
   const hasResult = result !== null;
 
+  // Document title reflects the run state — the tab strip doubles as a status light.
+  useEffect(() => {
+    const original = "Lighthouse — a founder's command center";
+    if (isRunning) {
+      document.title = "Lighthouse — searching…";
+    } else if (hasResult) {
+      const n =
+        (result?.investors.length ?? 0) +
+        (result?.design_partners.length ?? 0) +
+        (result?.talent.length ?? 0);
+      document.title = `Lighthouse — ${n} results`;
+    } else {
+      document.title = original;
+    }
+    return () => {
+      document.title = original;
+    };
+  }, [isRunning, hasResult, result]);
+
+  // 1/2/3 hotkeys switch tabs (power-user pattern from Gmail/Discord).
+  useEffect(() => {
+    if (!hasResult) return;
+    function onKeyDown(e: KeyboardEvent) {
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || target?.isContentEditable) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.key === "1") {
+        e.preventDefault();
+        setActiveTab("investor");
+      } else if (e.key === "2") {
+        e.preventDefault();
+        setActiveTab("design_partner");
+      } else if (e.key === "3") {
+        e.preventDefault();
+        setActiveTab("talent");
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [hasResult]);
+
   return (
     <main className="min-h-screen w-full flex flex-col items-center">
       {/* hero */}
@@ -185,6 +251,14 @@ export default function Home() {
       {/* results */}
       {hasResult && result && (
         <div className="w-full max-w-5xl mx-auto px-6 pb-24 flex flex-col gap-6">
+          {/* cost / duration / model banner — transparency is the product */}
+          <div className="self-stretch flex justify-center">
+            <div className="inline-flex items-center gap-2 rounded-full border border-neutral-200 dark:border-neutral-800 bg-neutral-50/80 dark:bg-neutral-900/60 px-3 py-1 text-[11px] font-mono tabular-nums text-neutral-600 dark:text-neutral-400">
+              <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400" />
+              {formatCostBanner(result.stats)}
+            </div>
+          </div>
+
           {/* thesis blurb */}
           <section className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white/60 dark:bg-neutral-900/40 backdrop-blur-sm p-5">
             <div className="text-[11px] uppercase tracking-[0.2em] text-neutral-500 mb-1">
@@ -209,9 +283,9 @@ export default function Home() {
           <div
             role="tablist"
             aria-label="matches"
-            className="inline-flex self-start rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white/60 dark:bg-neutral-900/40 p-1 gap-1"
+            className="relative inline-flex self-start rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white/60 dark:bg-neutral-900/40 p-1 gap-1"
           >
-            {TABS.map((tab) => {
+            {TABS.map((tab, i) => {
               const list = result[tab.key] as unknown as MatchResult["investors"];
               const selected = activeTab === tab.track;
               return (
@@ -221,17 +295,30 @@ export default function Home() {
                   role="tab"
                   aria-selected={selected}
                   onClick={() => setActiveTab(tab.track)}
+                  title={`Press ${i + 1}`}
                   className={clsx(
-                    "px-3.5 py-1.5 text-sm rounded-lg transition-colors flex items-center gap-2",
+                    "relative px-3.5 py-1.5 text-sm rounded-lg transition-colors flex items-center gap-2",
                     selected
-                      ? "bg-neutral-900 text-white dark:bg-white dark:text-neutral-900"
+                      ? "text-white dark:text-neutral-900"
                       : "text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800",
                   )}
                 >
-                  <span>{tab.label}</span>
+                  {selected && (
+                    <motion.span
+                      layoutId="tab-underline"
+                      aria-hidden
+                      className="absolute inset-0 rounded-lg bg-neutral-900 dark:bg-white"
+                      transition={
+                        reduced
+                          ? { duration: 0 }
+                          : { type: "spring", stiffness: 500, damping: 38 }
+                      }
+                    />
+                  )}
+                  <span className="relative z-[1]">{tab.label}</span>
                   <span
                     className={clsx(
-                      "text-xs tabular-nums rounded-full px-1.5",
+                      "relative z-[1] text-xs tabular-nums rounded-full px-1.5",
                       selected
                         ? "bg-white/20 dark:bg-neutral-900/20"
                         : "bg-neutral-200 dark:bg-neutral-800",

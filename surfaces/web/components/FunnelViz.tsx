@@ -4,6 +4,7 @@ import { motion, useMotionValue, useTransform, animate } from "framer-motion";
 import { useEffect, useMemo, useRef } from "react";
 import clsx from "clsx";
 import type { PipelineStage } from "@/lib/types";
+import { useReducedMotion } from "@/lib/useReducedMotion";
 
 interface Stage {
   key: PipelineStage;
@@ -38,13 +39,19 @@ interface CounterProps {
   runKey: string;
   /** Starting value for count-down animation. */
   from: number;
+  /** Skip animation entirely for reduced-motion users. */
+  reduced: boolean;
 }
 
-function Counter({ target, runKey, from }: CounterProps) {
-  const mv = useMotionValue(from);
+function Counter({ target, runKey, from, reduced }: CounterProps) {
+  const mv = useMotionValue(reduced ? target : from);
   const display = useTransform(mv, (v) => fmt(v));
 
   useEffect(() => {
+    if (reduced) {
+      mv.set(target);
+      return;
+    }
     // Animate from `from` down to `target` with an ease-out curve.
     // Larger starting numbers get a slightly longer duration for drama.
     const span = Math.max(1, Math.log10(Math.max(from, 2)) - Math.log10(Math.max(target, 2)));
@@ -57,7 +64,7 @@ function Counter({ target, runKey, from }: CounterProps) {
     return () => controls.stop();
     // runKey is what re-triggers the animation when a new run begins.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [runKey, target]);
+  }, [runKey, target, reduced]);
 
   return <motion.span className="tabular-nums">{display}</motion.span>;
 }
@@ -72,6 +79,8 @@ export interface FunnelVizProps {
 }
 
 export default function FunnelViz({ completed, active, runId }: FunnelVizProps) {
+  const reduced = useReducedMotion();
+
   // Lock in the per-run starting values once so the count-down reads naturally.
   const fromValues = useMemo(() => {
     return STAGES.map((s) => s.target * 2.2);
@@ -81,6 +90,12 @@ export default function FunnelViz({ completed, active, runId }: FunnelVizProps) 
 
   // Remember prior completed set so we can briefly pulse on newly-done stages.
   const prevCompleted = useRef<Set<PipelineStage>>(new Set());
+
+  // Detect the moment the final stage just finished — triggers a gentle bounce.
+  const finalStageKey = STAGES[STAGES.length - 1].matchEvent;
+  const finalJustDone =
+    completed.has(finalStageKey) && !prevCompleted.current.has(finalStageKey);
+
   useEffect(() => {
     prevCompleted.current = new Set(completed);
   }, [completed]);
@@ -96,16 +111,42 @@ export default function FunnelViz({ completed, active, runId }: FunnelVizProps) 
           const isDone   = completed.has(stage.matchEvent);
           const isActive = active === stage.matchEvent;
           const isHot    = isActive || isDone;
+          const isPending = !isHot;
+          const isFinal = i === STAGES.length - 1;
+
+          // Settle bounce on the final stage's done event.
+          const bounceAnimate =
+            isFinal && finalJustDone && !reduced
+              ? { scale: [1, 1.08, 1] }
+              : undefined;
 
           return (
             <motion.div
               key={stage.key}
               initial={false}
-              animate={{
-                scale: isActive ? 1.05 : 1,
-                opacity: isHot ? 1 : 0.55,
-              }}
-              transition={{ type: "spring", stiffness: 220, damping: 22 }}
+              animate={
+                bounceAnimate ?? {
+                  scale: isActive && !reduced ? 1.05 : 1,
+                  // Pending rows pulse 0.4 → 0.6 so the user sees work is active.
+                  opacity: isHot
+                    ? 1
+                    : isPending && !reduced
+                    ? [0.4, 0.6, 0.4]
+                    : 0.55,
+                }
+              }
+              transition={
+                bounceAnimate
+                  ? { duration: 0.5, ease: [0.22, 1, 0.36, 1] }
+                  : isPending && !reduced
+                  ? {
+                      opacity: { duration: 2, repeat: Infinity, ease: "easeInOut" },
+                      scale: { type: "spring", stiffness: 220, damping: 22 },
+                    }
+                  : reduced
+                  ? { duration: 0 }
+                  : { type: "spring", stiffness: 220, damping: 22 }
+              }
               style={{ width: `${stage.widthPct}%` }}
               className={clsx(
                 "relative rounded-full border px-5 py-3 flex items-center justify-between",
@@ -118,7 +159,7 @@ export default function FunnelViz({ completed, active, runId }: FunnelVizProps) 
               )}
             >
               {/* active-stage shimmer */}
-              {isActive && (
+              {isActive && !reduced && (
                 <motion.div
                   aria-hidden
                   className="absolute inset-0 rounded-full bg-gradient-to-r from-transparent via-amber-400/15 to-transparent"
@@ -146,6 +187,7 @@ export default function FunnelViz({ completed, active, runId }: FunnelVizProps) 
                   target={stage.target}
                   from={fromValues[i]}
                   runKey={runId}
+                  reduced={reduced}
                 />
               </span>
             </motion.div>

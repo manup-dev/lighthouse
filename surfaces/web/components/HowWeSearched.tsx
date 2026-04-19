@@ -4,6 +4,8 @@ import { AnimatePresence, motion } from "framer-motion";
 import { useState } from "react";
 import clsx from "clsx";
 import type { CrustQueryPlan, Track } from "@/lib/types";
+import { useReducedMotion } from "@/lib/useReducedMotion";
+import JsonView from "./JsonView";
 
 export interface HowWeSearchedProps {
   plans: CrustQueryPlan[];
@@ -15,6 +17,13 @@ const TRACK_COLORS: Record<Track, string> = {
   talent: "text-emerald-600 dark:text-emerald-400",
 };
 
+/** Left-accent border per track — scan-first cue. */
+const TRACK_BORDER: Record<Track, string> = {
+  investor: "border-l-4 border-l-sky-500",
+  design_partner: "border-l-4 border-l-violet-500",
+  talent: "border-l-4 border-l-emerald-500",
+};
+
 const TRACK_LABEL: Record<Track, string> = {
   investor: "investor",
   design_partner: "design_partner",
@@ -23,6 +32,7 @@ const TRACK_LABEL: Record<Track, string> = {
 
 export default function HowWeSearched({ plans }: HowWeSearchedProps) {
   const [open, setOpen] = useState(false);
+  const reduced = useReducedMotion();
 
   return (
     <section className="w-full rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white/50 dark:bg-neutral-900/40 backdrop-blur-sm">
@@ -45,7 +55,7 @@ export default function HowWeSearched({ plans }: HowWeSearchedProps) {
         </div>
         <motion.span
           animate={{ rotate: open ? 90 : 0 }}
-          transition={{ duration: 0.2 }}
+          transition={reduced ? { duration: 0 } : { duration: 0.2 }}
           className="text-neutral-500 text-xl font-light select-none"
           aria-hidden
         >
@@ -57,17 +67,20 @@ export default function HowWeSearched({ plans }: HowWeSearchedProps) {
         {open && (
           <motion.div
             key="panel"
-            initial={{ height: 0, opacity: 0 }}
+            initial={reduced ? false : { height: 0, opacity: 0 }}
             animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+            exit={reduced ? { opacity: 0 } : { height: 0, opacity: 0 }}
+            transition={reduced ? { duration: 0 } : { duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
             className="overflow-hidden"
           >
             <div className="px-5 pb-5 flex flex-col gap-4 max-h-[520px] overflow-y-auto">
               {plans.map((plan, i) => (
                 <div
                   key={i}
-                  className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-neutral-50/70 dark:bg-neutral-950/60"
+                  className={clsx(
+                    "rounded-xl border border-neutral-200 dark:border-neutral-800 bg-neutral-50/70 dark:bg-neutral-950/60 overflow-hidden",
+                    TRACK_BORDER[plan.track],
+                  )}
                 >
                   <header className="flex items-center justify-between px-4 py-2.5 border-b border-neutral-200 dark:border-neutral-800">
                     <div className="flex items-center gap-3">
@@ -88,9 +101,9 @@ export default function HowWeSearched({ plans }: HowWeSearchedProps) {
                   <p className="px-4 py-2 text-xs text-neutral-600 dark:text-neutral-400 italic border-b border-neutral-200 dark:border-neutral-800">
                     {plan.rationale}
                   </p>
-                  <pre className="px-4 py-3 text-[11px] leading-relaxed font-mono text-neutral-800 dark:text-neutral-200 overflow-x-auto">
-{JSON.stringify(plan.payload, null, 2)}
-                  </pre>
+                  <div className="px-4 py-3 text-[11px] leading-relaxed font-mono overflow-x-auto">
+                    <JsonView value={plan.payload} />
+                  </div>
                 </div>
               ))}
             </div>
