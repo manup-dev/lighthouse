@@ -92,7 +92,8 @@ Built at **ContextCon** — Crustdata × Y Combinator, Bengaluru, 19 April 2026.
 
 ## The team
 
-Solo founder- manu ram pandit
+Solo founder for now - Manu
+Install other project chrome extension [themarkdownreader]([url](https://github.com/manup-dev/themarkdownreader)) to read this better
 
 ## License
 
