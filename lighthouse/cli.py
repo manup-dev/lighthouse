@@ -48,6 +48,13 @@ class _DryRunCrust:
     }
 
     async def fan_out(self, plans: list[CrustQueryPlan]) -> list[dict[str, Any]]:
+        def _key(endpoint: str) -> str:
+            if endpoint == "/company/search":
+                return "companies"
+            if endpoint == "/web/search/live":
+                return "results"
+            return "profiles"
+
         out: list[dict[str, Any]] = []
         for plan in plans:
             out.append(
@@ -55,7 +62,7 @@ class _DryRunCrust:
                     "track": plan.track,
                     "endpoint": plan.endpoint,
                     "rationale": plan.rationale,
-                    "response": {"results": self._DEMO.get(plan.track, [])},
+                    "response": {_key(plan.endpoint): self._DEMO.get(plan.track, [])},
                     "error": None,
                 }
             )

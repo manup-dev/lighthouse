@@ -143,7 +143,9 @@ class RepoAnalyzer:
                 names.add(match.group(1).lower())
 
         names.discard("")
-        return sorted(names)
+        # Cap — Cargo.toml/package.json can list 200+ deps which blow up the
+        # thesis prompt and starve local-LLM context for the ranker stage.
+        return sorted(names)[:30]
 
     @staticmethod
     def _dep_name(spec: str) -> str:
@@ -180,7 +182,8 @@ class RepoAnalyzer:
             parts = line.split(" ", 1)
             if len(parts) == 2:
                 themes.append(parts[1].strip())
-        return themes
+        # Cap — 50 commit subjects is more than the thesis engine needs.
+        return themes[:30]
 
     def _read_readme(self, root: Path) -> str:
         for name in ("README.md", "README.rst", "README.txt", "README"):

@@ -5,21 +5,32 @@ import { AnimatePresence, motion } from "framer-motion";
 import clsx from "clsx";
 
 import FunnelViz from "@/components/FunnelViz";
-import PersonCard from "@/components/PersonCard";
+import MissionCard from "@/components/MissionCard";
+import CommandCenterStrip from "@/components/CommandCenterStrip";
+import DraftForge from "@/components/DraftForge";
 import HowWeSearched from "@/components/HowWeSearched";
 import InputForm from "@/components/InputForm";
 import LogConsole, { type LogLine } from "@/components/LogConsole";
+import QueueWait from "@/components/QueueWait";
 import RunBanner from "@/components/RunBanner";
 import TopNav from "@/components/TopNav";
 import RotatingWord from "@/components/RotatingWord";
 import Logo from "@/components/Logo";
 
 import { DEMO_MATCH } from "@/lib/demo";
-import { startMatch, subscribeEvents } from "@/lib/api";
-import type { MatchResult, PipelineStage, Track } from "@/lib/types";
+import {
+  QueueFullError,
+  startMatch,
+  subscribeEvents,
+  type GalleryItem,
+  type QueueState,
+} from "@/lib/api";
+import { buildHandoffPrompt } from "@/lib/handoff";
+import { missionKey, useMissionStore } from "@/lib/mission";
+import type { MatchedPerson, MatchResult, PipelineStage, Track } from "@/lib/types";
 import { useReducedMotion } from "@/lib/useReducedMotion";
 
-type UiState = "idle" | "running" | "done" | "demo";
+type UiState = "idle" | "queued" | "running" | "done" | "demo" | "gallery";
 
 const TABS: ReadonlyArray<{ track: Track; label: string; key: keyof MatchResult }> = [
   { track: "investor",       label: "Investors",        key: "investors" },
@@ -75,6 +86,11 @@ export default function Home() {
   const [activeTab, setActiveTab] = useState<Track>("investor");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [logs, setLogs] = useState<LogLine[]>([]);
+  // Refine-draft modal + handoff toast + in-memory draft overrides
+  const [forgePerson, setForgePerson] = useState<MatchedPerson | null>(null);
+  const [draftOverrides, setDraftOverrides] = useState<Record<string, string>>({});
+  const [handoffToast, setHandoffToast] = useState<string | null>(null);
+  const mission = useMissionStore();
   // Tracks that have been progressively "revealed" after a result arrives.
   const [readyTracks, setReadyTracks] = useState<Set<Track>>(new Set());
   const [runStartedAt, setRunStartedAt] = useState<number | null>(null);
@@ -87,6 +103,9 @@ export default function Home() {
     },
   );
   const [notifyPending, setNotifyPending] = useState(false);
+  const [queueState, setQueueState] = useState<QueueState | null>(null);
+  const [galleryOnly, setGalleryOnly] = useState(false);
+  const [sampleMeta, setSampleMeta] = useState<GalleryItem | null>(null);
   const logSeq = useRef(0);
   const reduced = useReducedMotion();
 
@@ -184,20 +203,30 @@ export default function Home() {
       setReadyTracks(new Set());
       setErrorMsg(null);
       setLogs([]);
+      setQueueState(null);
+      setGalleryOnly(false);
+      setSampleMeta(null);
       logSeq.current = 0;
-      setState("running");
+      setState("queued"); // optimistic — SSE queue events will either keep us here or flip to running
       setRunStartedAt(Date.now());
       setRunId(`${Date.now()}`);
 
       // Try the real API first — but never block the demo if it's down.
       try {
-        const { match_id } = await startMatch(
+        const { match_id, queue } = await startMatch(
           { repo_url, location, user_hint },
           AbortSignal.timeout(3000),
         );
+        if (queue) setQueueState(queue);
 
         sseCleanup.current = subscribeEvents(match_id, {
+          onQueue: (q) => {
+            setQueueState(q);
+            setState(q.position <= 0 ? "running" : "queued");
+          },
           onStage: (evt) => {
+            // First stage event means the pipeline actually started running.
+            setState("running");
             if (evt.status === "start") {
               setActive(evt.stage);
             } else {
@@ -245,7 +274,14 @@ export default function Home() {
             setErrorMsg(msg);
           },
         });
-      } catch {
+      } catch (e) {
+        if (e instanceof QueueFullError) {
+          // Demo is slammed — flip into gallery-only mode so the user still
+          // sees something useful instead of a raw error.
+          setGalleryOnly(true);
+          setState("gallery");
+          return;
+        }
         // API unreachable — fall back to bundled demo data. Silent on purpose.
         runDemoSimulation();
       }
@@ -253,7 +289,29 @@ export default function Home() {
     [resetTimers, runDemoSimulation, scheduleProgressiveReveal],
   );
 
+  const handleOpenSample = useCallback(
+    (match: MatchResult, meta: GalleryItem) => {
+      resetTimers();
+      sseCleanup.current?.();
+      sseCleanup.current = null;
+      setResult(match);
+      setSampleMeta(meta);
+      setErrorMsg(null);
+      setQueueState(null);
+      setActive(null);
+      setCompleted(new Set(DEMO_SEQUENCE)); // a baked run is a "done" pipeline
+      setState("done");
+      scheduleProgressiveReveal();
+      if (typeof window !== "undefined") {
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      }
+    },
+    [resetTimers, scheduleProgressiveReveal],
+  );
+
   const isRunning = state === "running";
+  const isQueued = state === "queued";
+  const isGalleryOnly = state === "gallery";
   const hasResult = result !== null;
 
   const requestNotifyPermission = useCallback(async () => {
@@ -317,8 +375,53 @@ export default function Home() {
     if (!result) return [];
     const tab = TABS.find((t) => t.track === activeTab);
     if (!tab) return [];
-    return result[tab.key] as unknown as MatchResult["investors"];
-  }, [result, activeTab]);
+    const raw = result[tab.key] as unknown as MatchResult["investors"];
+    // Apply in-memory draft overrides from DraftForge "Keep" without mutating the server result.
+    return raw.map((p) => {
+      const key = missionKey(p);
+      const override = draftOverrides[key];
+      return override ? { ...p, warm_intro_draft: override } : p;
+    });
+  }, [result, activeTab, draftOverrides]);
+
+  const handleRefine = useCallback((person: MatchedPerson) => {
+    setForgePerson(person);
+  }, []);
+
+  const handleForgeKeep = useCallback(
+    (newDraft: string) => {
+      if (!forgePerson) return;
+      const key = missionKey(forgePerson);
+      setDraftOverrides((prev) => ({ ...prev, [key]: newDraft }));
+      mission.addDraft(key, newDraft);
+      mission.advance(key, "refined");
+      setForgePerson(null);
+    },
+    [forgePerson, mission],
+  );
+
+  const handleHandoff = useCallback(
+    async (person: MatchedPerson) => {
+      const key = missionKey(person);
+      const draft = draftOverrides[key] ?? person.warm_intro_draft;
+      const prompt = buildHandoffPrompt({
+        person,
+        track: activeTab,
+        draft,
+        repoUrl: result?.repo_url,
+      });
+      try {
+        await navigator.clipboard.writeText(prompt);
+        setHandoffToast(`Handoff copied — paste into Claude Code (${person.name})`);
+      } catch {
+        setHandoffToast("Clipboard blocked — select the text in the console to copy");
+        // eslint-disable-next-line no-console
+        console.log("[lighthouse handoff]", prompt);
+      }
+      window.setTimeout(() => setHandoffToast(null), 4000);
+    },
+    [activeTab, draftOverrides, result?.repo_url],
+  );
 
   const activeReady = readyTracks.has(activeTab);
 
@@ -367,6 +470,18 @@ export default function Home() {
             notifyPending={notifyPending}
           />
 
+          {sampleMeta && hasResult && (
+            <div className="w-full max-w-2xl -mt-2 mb-1">
+              <div className="text-xs text-neutral-500 text-center">
+                showing a baked sample run for{" "}
+                <span className="font-medium text-neutral-700 dark:text-neutral-300">
+                  {sampleMeta.display_name}
+                </span>{" "}
+                — submit a repo above to start your own.
+              </div>
+            </div>
+          )}
+
           {errorMsg && (
             <p className="text-xs text-amber-600 dark:text-amber-400">
               API hiccup: {errorMsg} — showing cached demo data below.
@@ -374,6 +489,17 @@ export default function Home() {
           )}
         </div>
       </div>
+
+      {/* queue wait — gallery while user is queued or when demo is slammed */}
+      {(isQueued || isGalleryOnly) && (
+        <QueueWait
+          position={queueState?.position ?? 0}
+          depth={queueState?.depth ?? 0}
+          etaSec={queueState?.eta_sec ?? 0}
+          galleryOnly={isGalleryOnly}
+          onOpenSample={handleOpenSample}
+        />
+      )}
 
       {/* funnel */}
       {(isRunning || hasResult) && (
@@ -391,6 +517,11 @@ export default function Home() {
               <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400" />
               {formatCostBanner(result.stats)}
             </div>
+          </div>
+
+          {/* outreach command center — lifecycle counts across all 15 cards */}
+          <div className="self-stretch flex justify-center">
+            <CommandCenterStrip />
           </div>
 
           {/* thesis blurb */}
@@ -504,7 +635,12 @@ export default function Home() {
                           }
                     }
                   >
-                    <PersonCard person={person} track={activeTab} />
+                    <MissionCard
+                      person={person}
+                      track={activeTab}
+                      onRefine={handleRefine}
+                      onHandoff={handleHandoff}
+                    />
                   </motion.div>
                 ))
               ) : (
@@ -530,16 +666,56 @@ export default function Home() {
         </div>
       )}
 
-      {/* empty state hint */}
-      {!isRunning && !hasResult && (
-        <div className="max-w-xl mx-auto px-6 py-10 text-center text-sm text-neutral-500">
-          Try <code className="px-1 py-0.5 rounded bg-neutral-100 dark:bg-neutral-800">github.com/acme/freight-graph</code>{" "}
-          or any public repo to see a demo run.
-        </div>
+      {/* empty state — show baked gallery so the landing page is never empty */}
+      {!isRunning && !isQueued && !isGalleryOnly && !hasResult && (
+        <>
+          <div className="max-w-xl mx-auto px-6 pt-6 pb-2 text-center text-sm text-neutral-500">
+            Try <code className="px-1 py-0.5 rounded bg-neutral-100 dark:bg-neutral-800">github.com/acme/freight-graph</code>{" "}
+            or any public repo — or explore a baked sample ↓
+          </div>
+          <QueueWait
+            position={0}
+            depth={0}
+            etaSec={0}
+            mode="idle"
+            onOpenSample={handleOpenSample}
+          />
+        </>
       )}
 
       {/* live backend trace */}
       <LogConsole logs={logs} running={isRunning} />
+
+      {/* draft refine modal */}
+      {forgePerson && (
+        <DraftForge
+          open={forgePerson !== null}
+          person={forgePerson}
+          track={activeTab}
+          initialDraft={
+            draftOverrides[missionKey(forgePerson)] ?? forgePerson.warm_intro_draft
+          }
+          onClose={() => setForgePerson(null)}
+          onKeep={handleForgeKeep}
+        />
+      )}
+
+      {/* handoff toast */}
+      <AnimatePresence>
+        {handoffToast && (
+          <motion.div
+            key="handoff-toast"
+            initial={reduced ? false : { opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={reduced ? { opacity: 0 } : { opacity: 0, y: 12 }}
+            transition={reduced ? { duration: 0 } : { duration: 0.2 }}
+            className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 rounded-full border border-emerald-500/30 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200 px-4 py-2 text-sm font-medium backdrop-blur-sm shadow-lg"
+            role="status"
+          >
+            {handoffToast}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </main>
   );
 }

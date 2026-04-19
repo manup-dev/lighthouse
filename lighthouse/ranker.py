@@ -7,7 +7,7 @@ from typing import Literal
 from pydantic import BaseModel
 
 from lighthouse.models import MatchedPerson, ReQueryRequest, Thesis
-from lighthouse.thesis import LLM, _strip_fence
+from lighthouse.thesis import LLM, call_llm_for_json
 
 SYSTEM_PROMPT_PATH = Path(__file__).parent / "prompts" / "ranker.md"
 
@@ -25,6 +25,12 @@ class Ranker:
         self._llm = llm
         self._system = SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
 
+    # Cap input candidates so the ranker prompt fits in the local LLM's context.
+    # Qdrant-sized runs fan out ~100+ results per track; Qwen 14B silently
+    # returns an empty string when the prompt overflows num_ctx. We only need
+    # the top 5 anyway, so feeding more than ~40 candidates is pure overhead.
+    MAX_CANDIDATES = 25
+
     def rank(
         self,
         thesis: Thesis,
@@ -33,15 +39,17 @@ class Ranker:
     ) -> RankOutcome:
         if track not in _VALID_TRACKS:
             raise ValueError(f"invalid track {track!r}; expected one of {_VALID_TRACKS}")
+        trimmed = candidates[: self.MAX_CANDIDATES]
         user_payload = {
             "track": track,
             "thesis": thesis.model_dump(),
-            "candidates": candidates,
+            "candidates": trimmed,
         }
-        raw = self._llm(self._system, json.dumps(user_payload))
-        cleaned = _strip_fence(raw)
-        try:
-            data = json.loads(cleaned)
-        except json.JSONDecodeError as exc:
-            raise ValueError(f"Ranker: LLM did not return valid JSON: {exc}") from exc
+        data = call_llm_for_json(
+            self._llm,
+            self._system,
+            json.dumps(user_payload),
+            stage="Ranker",
+            expect="object",
+        )
         return RankOutcome(**data)

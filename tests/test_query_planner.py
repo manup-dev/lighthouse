@@ -313,9 +313,16 @@ def test_query_planner_converts_list_on_bracket_dot_to_in(thesis):
     # `[.]` + list → `in` + same list
     assert conds[0]["type"] == "in"
     assert conds[0]["value"] == ["Sequoia", "Accel"]
-    # `(.)` + list → `(.)` + pipe-joined string (fuzzy regex)
-    assert conds[1]["type"] == "(.)"
-    assert conds[1]["value"] == "Partner|Principal"
+    # `(.)` + list → OR-group of single-term `(.)` conditions.
+    # (Crustdata's `(.)` is fuzzy substring, not regex — pipes match literally,
+    # so a pipe-joined alternation would return zero results.)
+    assert conds[1] == {
+        "op": "or",
+        "conditions": [
+            {"field": "experience.employment_details.title", "type": "(.)", "value": "Partner"},
+            {"field": "experience.employment_details.title", "type": "(.)", "value": "Principal"},
+        ],
+    }
 
 
 def test_query_planner_system_prompt_contains_filter_schema(thesis):

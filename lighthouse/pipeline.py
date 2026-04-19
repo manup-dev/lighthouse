@@ -4,6 +4,7 @@ import time
 from typing import Any, Callable, Protocol
 
 from lighthouse.analyzer import RepoAnalyzer
+from lighthouse.enricher import Enricher
 from lighthouse.models import (
     CrustQueryPlan,
     LogEvent,
@@ -114,6 +115,7 @@ class Pipeline:
         thesis_engine = ThesisEngine(traced)
         query_planner = QueryPlanner(traced)
         ranker = Ranker(traced)
+        enricher = Enricher(traced)
         outreach = OutreachDrafter(traced)
 
         emit("analyzer", "start")
@@ -176,7 +178,7 @@ class Pipeline:
                     stage="crust_fanout",
                 )
             else:
-                count = len((resp or {}).get("results") or [])
+                count = len(_extract_candidates(plan.endpoint, resp))
                 log(
                     f"✓ {plan.endpoint} [{plan.track}] {progress} → {count} results",
                     stage="crust_fanout",
@@ -196,7 +198,7 @@ class Pipeline:
                 if err:
                     log(f"✗ {endpoint} [{track}] — {err}", level="warn", stage="crust_fanout")
                 else:
-                    count = len((item.get("response") or {}).get("results") or [])
+                    count = len(_extract_candidates(endpoint, item.get("response")))
                     log(f"✓ {endpoint} [{track}] → {count} results", stage="crust_fanout")
         candidates_by_track = self._group_candidates(raw_results)
         emit(
@@ -225,6 +227,28 @@ class Pipeline:
             "done",
             {"counts": {t: len(ranked[t]) for t in _TRACKS}},
         )
+
+        emit("enricher", "start")
+        log(
+            "Resolving canonical names + firm logos for each match…",
+            stage="enricher",
+        )
+        traced.set_stage("enricher")
+        try:
+            ranked = enricher.enrich(ranked)
+            n_logos = sum(
+                1
+                for track in _TRACKS
+                for p in ranked.get(track, [])
+                if p.logo_url
+            )
+            log(
+                f"↳ logos resolved: {n_logos} across all tracks",
+                stage="enricher",
+            )
+        except Exception as exc:  # noqa: BLE001 — enrichment is best-effort
+            log(f"enricher failed: {exc}", level="warn", stage="enricher")
+        emit("enricher", "done")
 
         emit("outreach", "start")
         log("Drafting warm intros for all matches…", stage="outreach")
@@ -263,12 +287,36 @@ class Pipeline:
             track = item.get("track")
             if track not in by_track:
                 continue
-            response = item.get("response") or {}
-            for candidate in response.get("results") or []:
-                url = candidate.get("linkedin")
+            candidates = _extract_candidates(item.get("endpoint"), item.get("response"))
+            for candidate in candidates:
+                url = candidate.get("linkedin") or (
+                    candidate.get("social_handles", {})
+                    .get("professional_network_identifier", {})
+                    .get("profile_url")
+                )
                 if url:
                     if url in seen_linkedin[track]:
                         continue
                     seen_linkedin[track].add(url)
                 by_track[track].append(candidate)
         return by_track
+
+
+def _extract_candidates(endpoint: str | None, response: dict | None) -> list[dict]:
+    """Crustdata uses a different results key per endpoint: `profiles` for
+    /person/search, `companies` for /company/search, `results` for
+    /web/search/live. Reading the wrong key silently drops real candidates."""
+    if not response:
+        return []
+    if endpoint == "/person/search":
+        return response.get("profiles") or []
+    if endpoint == "/company/search":
+        return response.get("companies") or []
+    if endpoint == "/web/search/live":
+        return response.get("results") or []
+    return (
+        response.get("profiles")
+        or response.get("companies")
+        or response.get("results")
+        or []
+    )

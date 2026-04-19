@@ -23,12 +23,20 @@ class FakeCrustClient:
         }
 
     async def fan_out(self, plans):
+        # Crustdata uses different result keys per endpoint — match real API.
+        def _response(endpoint: str, items: list[dict]) -> dict:
+            if endpoint == "/company/search":
+                return {"companies": items}
+            if endpoint == "/web/search/live":
+                return {"results": items}
+            return {"profiles": items}
+
         return [
             {
                 "track": p.track,
                 "endpoint": p.endpoint,
                 "rationale": p.rationale,
-                "response": {"results": self._per_track.get(p.track, [])},
+                "response": _response(p.endpoint, self._per_track.get(p.track, [])),
                 "error": None,
             }
             for p in plans
@@ -88,6 +96,18 @@ def _make_llm_router() -> callable:
                     }
                 )
             return json.dumps({"matches": matches, "requery": None})
+        if "clean up messy candidate records" in sys_lower:
+            data = json.loads(user)
+            name = data.get("name") or ""
+            company = data.get("company") or ""
+            return json.dumps(
+                {
+                    "kind": "person" if data.get("linkedin") else "organization",
+                    "name": name or company,
+                    "firm": company or name,
+                    "domain": "example.com" if company else "",
+                }
+            )
         if "warm-intro" in sys_lower or "founder" in sys_lower and "draft" in sys_lower:
             data = json.loads(user)
             drafts = {p["id"]: f"Hi {p['name']} — saw your post. We're building {data['thesis']['moat']}." for p in data["people"]}

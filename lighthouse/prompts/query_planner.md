@@ -34,9 +34,19 @@ Every `/person/search` and `/company/search` payload uses:
 Operators:
 - `=`, `!=`, `>`, `<`, `=>`, `=<`  (note: NOT `>=` / `<=`)
 - `in`, `not_in` — value MUST be a list of discrete match values (e.g. `["Seed", "Series A"]`). **Never** use `in` for numeric ranges; use paired `=>` / `=<` conditions instead.
-- `(.)` fuzzy text, `[.]` exact tokens
+- `(.)` fuzzy substring match — value MUST be a single substring. **Pipes, `|`, and regex metacharacters are matched literally** (e.g. `"Staff|Principal"` matches the literal string `Staff|Principal`, not "Staff OR Principal"). To match any of several substrings, emit an `or` group of single-term `(.)` conditions — one condition per term.
+- `[.]` exact token match — value is a single string.
 - `geo_distance` (person search only), value shape:
   `{"location": "<city>", "distance": N, "unit": "km"}`
+
+Example — "title is Staff, Principal, or Senior":
+```
+{"op": "or", "conditions": [
+  {"field": "experience.employment_details.title", "type": "(.)", "value": "Staff"},
+  {"field": "experience.employment_details.title", "type": "(.)", "value": "Principal"},
+  {"field": "experience.employment_details.title", "type": "(.)", "value": "Senior"}
+]}
+```
 
 Every condition MUST have a non-null `value` of the correct type (string, number, bool, or list). Do NOT emit `is_null` / `is_not_null` / `exists` — Crustdata does not support them. If you want to require a field is set, just match on a non-null value.
 
@@ -69,7 +79,7 @@ as a supplement for recent-post signals.
 
 INVESTOR track (3–4 queries):
 - **2× `/person/search` (required)**:
-  - (a) `title` `(.)` `"Partner|General Partner|GP|Managing Partner|Principal"`
+  - (a) `title` `(.)` an OR-group of single-term `(.)` conditions on each of `Partner`, `General Partner`, `Managing Partner`, `Principal` — one condition per term (see fuzzy-match example above)
         AND `company_name` `in` with a literal list of top venture firms relevant
         to the thesis geography — e.g. for India pick from
         `["Sequoia Capital","Peak XV Partners","Accel","Lightspeed","Blume Ventures",
@@ -91,12 +101,13 @@ DESIGN_PARTNER track (3 queries):
 TALENT track (3 queries):
 - **2× `/person/search` (required)** — emit BOTH in parallel:
   - (a) TIGHT: `geo_distance` on `professional_network.location.raw` with the
-        provided `location`, 25 km, AND `title` `(.)` regex covering the
-        ideal-hire seniority ladder (Staff|Principal|Senior|Director|VP|Head of).
-        Exclude recruiter titles with `not_in`.
-  - (b) BROADER fallback: NO geo filter, same title regex only. Catches remote /
-        out-of-geo candidates. (If user location is "Anywhere" or null, skip
-        query (a) and emit only the broader one.)
+        provided `location`, 25 km, AND an OR-group of single-term `(.)` conditions on
+        `experience.employment_details.title` covering the ideal-hire seniority
+        ladder (`Staff`, `Principal`, `Senior`, `Director`, `VP`, `Head of`) — one
+        `(.)` condition per term, wrapped in `{"op": "or", "conditions": [...]}`.
+  - (b) BROADER fallback: NO geo filter, same title OR-group only. Catches
+        remote / out-of-geo candidates. (If user location is "Anywhere" or null,
+        skip query (a) and emit only the broader one.)
 - 1× `/web/search/live`: candidates' public activity on the thesis themes.
 
 ## Output

@@ -44,6 +44,16 @@ def _build_fake_llm():
                 for i, c in enumerate(data["candidates"][:5])
             ]
             return json.dumps({"matches": matches, "requery": None})
+        if "clean up messy candidate records" in sys_lower:
+            data = json.loads(user)
+            return json.dumps(
+                {
+                    "kind": "person" if data.get("linkedin") else "organization",
+                    "name": data.get("name") or data.get("company") or "",
+                    "firm": data.get("company") or data.get("name") or "",
+                    "domain": "",
+                }
+            )
         if "warm-intro" in sys_lower or "warm intro" in sys_lower:
             data = json.loads(user)
             drafts = {p["id"]: f"hi {p['name']}" for p in data["people"]}

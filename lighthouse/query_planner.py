@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Callable
 
 from lighthouse.models import CrustQueryPlan, Thesis
-from lighthouse.thesis import _strip_fence
+from lighthouse.thesis import call_llm_for_json
 
 LLM = Callable[[str, str], str]
 
@@ -40,21 +40,49 @@ def _expand_in_range(cond: dict) -> list[dict] | None:
     ]
 
 
+def _expand_fuzzy_multi(cond: dict) -> dict | None:
+    """`(.)` is fuzzy substring match, NOT regex — pipes and other metacharacters
+    match literally. If the LLM tried to use `(.)` with either a list of terms
+    or a pipe-separated alternation string, rewrite it to an OR-group of
+    single-term `(.)` conditions so each term actually matches."""
+    if cond.get("type") != "(.)":
+        return None
+    value = cond.get("value")
+    field = cond.get("field")
+    terms: list[str]
+    if isinstance(value, list) and all(isinstance(v, str) for v in value):
+        terms = [v.strip() for v in value if v.strip()]
+    elif isinstance(value, str) and "|" in value:
+        terms = [t.strip() for t in value.split("|") if t.strip()]
+    else:
+        return None
+    if len(terms) <= 1:
+        if terms:
+            cond["value"] = terms[0]
+        return None
+    return {
+        "op": "or",
+        "conditions": [
+            {"field": field, "type": "(.)", "value": t} for t in terms
+        ],
+    }
+
+
 def _coerce_list_value(cond: dict) -> None:
     """Crustdata accepts list values only on `in` / `not_in`.
 
     - `[.]` + list → `in` + list
-    - `(.)` + list of strings → `(.)` + `"A|B|C"` (fuzzy regex alternation)
     - Any other op + list → promote to `in`
+
+    `(.)` + list is handled earlier by `_expand_fuzzy_multi` (it rewrites to an
+    OR-group of single-term conditions), so by the time we get here we should
+    not see it — but we defensively skip it anyway.
     """
     value = cond.get("value")
     if not isinstance(value, list):
         return
     op = cond.get("type")
-    if op in ("in", "not_in"):
-        return
-    if op == "(.)" and all(isinstance(v, str) for v in value):
-        cond["value"] = "|".join(value)
+    if op in ("in", "not_in", "(.)"):
         return
     # default: promote to `in`
     cond["type"] = "in"
@@ -79,6 +107,10 @@ def _sanitize_conditions(conditions: list) -> list:
         expanded = _expand_in_range(cond)
         if expanded is not None:
             out.extend(expanded)
+            continue
+        fuzzy_group = _expand_fuzzy_multi(cond)
+        if fuzzy_group is not None:
+            out.append(fuzzy_group)
             continue
         _coerce_list_value(cond)
         out.append(cond)
@@ -136,14 +168,13 @@ class QueryPlanner:
         }
         if user_hint:
             user_payload["user_hint"] = user_hint
-        raw = self._llm(self._system, json.dumps(user_payload))
-        cleaned = _strip_fence(raw)
-        try:
-            items = json.loads(cleaned)
-        except json.JSONDecodeError as exc:
-            raise ValueError(f"QueryPlanner: LLM did not return valid JSON: {exc}") from exc
-        if not isinstance(items, list):
-            raise ValueError(f"QueryPlanner: expected JSON array, got {type(items).__name__}")
+        items = call_llm_for_json(
+            self._llm,
+            self._system,
+            json.dumps(user_payload),
+            stage="QueryPlanner",
+            expect="array",
+        )
         for item in items:
             payload = item.get("payload")
             _normalize_operators(payload)

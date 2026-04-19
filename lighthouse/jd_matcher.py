@@ -13,6 +13,7 @@ from typing import Any, Protocol
 
 from lighthouse.models import CrustQueryPlan, MatchedPerson, Thesis
 from lighthouse.outreach import OutreachDrafter
+from lighthouse.pipeline import _extract_candidates
 from lighthouse.query_planner import QueryPlanner
 from lighthouse.ranker import Ranker
 from lighthouse.thesis import LLM, _strip_fence
@@ -61,9 +62,13 @@ class JDMatcher:
         seen: set[str] = set()
         out: list[dict] = []
         for item in raw_results:
-            response = item.get("response") or {}
-            for candidate in response.get("results") or []:
-                url = candidate.get("linkedin")
+            candidates = _extract_candidates(item.get("endpoint"), item.get("response"))
+            for candidate in candidates:
+                url = candidate.get("linkedin") or (
+                    candidate.get("social_handles", {})
+                    .get("professional_network_identifier", {})
+                    .get("profile_url")
+                )
                 if url:
                     if url in seen:
                         continue

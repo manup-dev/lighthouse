@@ -77,33 +77,53 @@ function linkedinHandle(url: string | null): string | null {
 
 function Avatar({ person }: { person: MatchedPerson }) {
   const handle = linkedinHandle(person.linkedin);
-  const [stage, setStage] = useState<"remote" | "initials">(
-    handle ? "remote" : "initials",
-  );
+  // Try sources in order: logo_url (firm logo from enricher) → LinkedIn avatar
+  // (unavatar proxy) → initials. The enricher makes the first source land for
+  // most investor/design-partner rows, which otherwise have no LinkedIn.
+  const initialStage: "logo" | "remote" | "initials" = person.logo_url
+    ? "logo"
+    : handle
+    ? "remote"
+    : "initials";
+  const [stage, setStage] = useState<"logo" | "remote" | "initials">(initialStage);
   const bg = useMemo(() => colorFromString(person.name), [person.name]);
 
-  if (stage === "initials" || !handle) {
+  if (stage === "logo" && person.logo_url) {
     return (
-      <div
-        aria-hidden
-        className="shrink-0 h-10 w-10 rounded-full flex items-center justify-center text-xs font-semibold text-white"
-        style={{ backgroundColor: bg }}
-      >
-        {initialsOf(person.name)}
-      </div>
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={person.logo_url}
+        alt=""
+        width={40}
+        height={40}
+        className="shrink-0 h-10 w-10 rounded-full object-contain p-1 border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-100"
+        onError={() => setStage(handle ? "remote" : "initials")}
+      />
+    );
+  }
+
+  if (stage === "remote" && handle) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={`https://unavatar.io/linkedin/${handle}?fallback=false`}
+        alt=""
+        width={40}
+        height={40}
+        className="shrink-0 h-10 w-10 rounded-full object-cover border border-neutral-200 dark:border-neutral-700 bg-neutral-100 dark:bg-neutral-800"
+        onError={() => setStage("initials")}
+      />
     );
   }
 
   return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
-      src={`https://unavatar.io/linkedin/${handle}?fallback=false`}
-      alt=""
-      width={40}
-      height={40}
-      className="shrink-0 h-10 w-10 rounded-full object-cover border border-neutral-200 dark:border-neutral-700 bg-neutral-100 dark:bg-neutral-800"
-      onError={() => setStage("initials")}
-    />
+    <div
+      aria-hidden
+      className="shrink-0 h-10 w-10 rounded-full flex items-center justify-center text-xs font-semibold text-white"
+      style={{ backgroundColor: bg }}
+    >
+      {initialsOf(person.name)}
+    </div>
   );
 }
 

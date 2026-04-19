@@ -52,6 +52,7 @@ class MatchedPerson(PersonCandidate):
     score: float
     sub_scores: dict[str, float]
     warm_intro_draft: str = ""
+    logo_url: str | None = None
 
 
 class StageEvent(BaseModel):

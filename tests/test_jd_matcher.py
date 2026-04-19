@@ -123,12 +123,19 @@ class FakeCrust:
         }
 
     async def fan_out(self, plans):
+        def _key(endpoint: str) -> str:
+            if endpoint == "/company/search":
+                return "companies"
+            if endpoint == "/web/search/live":
+                return "results"
+            return "profiles"
+
         return [
             {
                 "track": p.track,
                 "endpoint": p.endpoint,
                 "rationale": p.rationale,
-                "response": {"results": self._per_track.get(p.track, [])},
+                "response": {_key(p.endpoint): self._per_track.get(p.track, [])},
                 "error": None,
             }
             for p in plans

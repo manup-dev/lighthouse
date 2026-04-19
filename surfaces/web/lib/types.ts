@@ -31,6 +31,7 @@ export interface MatchedPerson {
   score: number;
   sub_scores: Record<string, number>;
   warm_intro_draft: string;
+  logo_url?: string | null;
 }
 
 export interface MatchResult {
@@ -51,6 +52,7 @@ export type PipelineStage =
   | "query_plan"
   | "crust_fanout"
   | "ranker"
+  | "enricher"
   | "outreach"
   | "pipeline";
 

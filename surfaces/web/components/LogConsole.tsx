@@ -21,6 +21,7 @@ const STAGE_COLOUR: Record<PipelineStage, string> = {
   query_plan: "text-fuchsia-400",
   crust_fanout: "text-emerald-400",
   ranker: "text-violet-400",
+  enricher: "text-cyan-400",
   outreach: "text-rose-400",
   pipeline: "text-neutral-400",
 };

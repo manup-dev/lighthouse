@@ -54,3 +54,4 @@ node_modules/
 .next/
 out/
 screenshots/
+.playwright-mcp/
