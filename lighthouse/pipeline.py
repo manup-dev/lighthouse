@@ -47,6 +47,7 @@ class Pipeline:
         location: str | None = None,
         on_event: EventCallback | None = None,
         on_log: LogCallback | None = None,
+        user_hint: str | None = None,
     ) -> MatchResult:
         def emit(stage: str, status: str, payload: dict[str, Any] | None = None) -> None:
             if on_event:
@@ -75,15 +76,19 @@ class Pipeline:
         emit("analyzer", "done", {"languages": fingerprint.languages})
 
         emit("thesis", "start")
+        if user_hint:
+            log(f"User hint: “{user_hint}”", stage="thesis")
         log("Calling LLM to extract venture thesis…", stage="thesis")
-        thesis = self.thesis_engine.extract(fingerprint)
+        thesis = self.thesis_engine.extract(fingerprint, user_hint=user_hint)
         log(f"Thesis moat: “{thesis.moat}”", stage="thesis")
         log(f"Themes: {thesis.themes}", stage="thesis")
         emit("thesis", "done", {"moat": thesis.moat})
 
         emit("query_plan", "start")
         log("Calling LLM — query planner stage…", stage="query_plan")
-        plans = self.query_planner.plan(thesis, location=location)
+        plans = self.query_planner.plan(
+            thesis, location=location, user_hint=user_hint
+        )
         for p in plans:
             log(f"↳ [{p.track}] {p.endpoint} — {p.rationale}", stage="query_plan")
         emit("query_plan", "done", {"count": len(plans)})

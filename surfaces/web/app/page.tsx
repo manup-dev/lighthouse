@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { motion } from "framer-motion";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import clsx from "clsx";
 
 import FunnelViz from "@/components/FunnelViz";
@@ -9,6 +9,9 @@ import PersonCard from "@/components/PersonCard";
 import HowWeSearched from "@/components/HowWeSearched";
 import InputForm from "@/components/InputForm";
 import LogConsole, { type LogLine } from "@/components/LogConsole";
+import TopNav from "@/components/TopNav";
+import RotatingWord from "@/components/RotatingWord";
+import Logo from "@/components/Logo";
 
 import { DEMO_MATCH } from "@/lib/demo";
 import { startMatch, subscribeEvents } from "@/lib/api";
@@ -22,6 +25,14 @@ const TABS: ReadonlyArray<{ track: Track; label: string; key: keyof MatchResult 
   { track: "design_partner", label: "Design Partners",  key: "design_partners" },
   { track: "talent",         label: "Senior Hires",     key: "talent" },
 ];
+
+// Order tracks are revealed to the user once a result lands.
+// "Investors first" — founders want the money signal before anything else.
+const REVEAL_ORDER: Track[] = ["investor", "design_partner", "talent"];
+
+// Suffix the period inside each variant so the dot tracks the word
+// instead of sitting at the end of the (longest-word) sizer slot.
+const HERO_WORDS = ["founders.", "recruiters.", "scouts.", "operators."];
 
 // The order stages light up in the simulated (demo) pipeline.
 const DEMO_SEQUENCE: PipelineStage[] = [
@@ -63,16 +74,21 @@ export default function Home() {
   const [activeTab, setActiveTab] = useState<Track>("investor");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [logs, setLogs] = useState<LogLine[]>([]);
+  // Tracks that have been progressively "revealed" after a result arrives.
+  const [readyTracks, setReadyTracks] = useState<Set<Track>>(new Set());
   const logSeq = useRef(0);
   const reduced = useReducedMotion();
 
   // Timers from the demo simulation — cleared on unmount or new run.
   const timers = useRef<number[]>([]);
+  const revealTimers = useRef<number[]>([]);
   const sseCleanup = useRef<(() => void) | null>(null);
 
   const resetTimers = useCallback(() => {
     timers.current.forEach((id) => window.clearTimeout(id));
     timers.current = [];
+    revealTimers.current.forEach((id) => window.clearTimeout(id));
+    revealTimers.current = [];
   }, []);
 
   useEffect(() => {
@@ -81,6 +97,29 @@ export default function Home() {
       sseCleanup.current?.();
     };
   }, [resetTimers]);
+
+  // Stagger reveal of the three tracks once a result arrives.
+  // Investors first — the most load-bearing track for founders.
+  const scheduleProgressiveReveal = useCallback(() => {
+    setReadyTracks(new Set());
+    // Instant if reduced-motion.
+    if (reduced) {
+      setReadyTracks(new Set(REVEAL_ORDER));
+      return;
+    }
+    const step = 550;
+    REVEAL_ORDER.forEach((track, i) => {
+      revealTimers.current.push(
+        window.setTimeout(() => {
+          setReadyTracks((prev) => {
+            const next = new Set(prev);
+            next.add(track);
+            return next;
+          });
+        }, i * step),
+      );
+    });
+  }, [reduced]);
 
   const runDemoSimulation = useCallback(() => {
     // Light up stages one by one, then reveal the result.
@@ -109,12 +148,21 @@ export default function Home() {
         setActive(null);
         setResult(DEMO_MATCH);
         setState("demo");
+        scheduleProgressiveReveal();
       }, elapsed + 200),
     );
-  }, []);
+  }, [scheduleProgressiveReveal]);
 
   const handleSubmit = useCallback(
-    async ({ repo_url, location }: { repo_url: string; location?: string }) => {
+    async ({
+      repo_url,
+      location,
+      user_hint,
+    }: {
+      repo_url: string;
+      location?: string;
+      user_hint?: string;
+    }) => {
       resetTimers();
       sseCleanup.current?.();
       sseCleanup.current = null;
@@ -122,6 +170,7 @@ export default function Home() {
       setResult(null);
       setActive(null);
       setCompleted(new Set());
+      setReadyTracks(new Set());
       setErrorMsg(null);
       setLogs([]);
       logSeq.current = 0;
@@ -131,7 +180,7 @@ export default function Home() {
       // Try the real API first — but never block the demo if it's down.
       try {
         const { match_id } = await startMatch(
-          { repo_url, location },
+          { repo_url, location, user_hint },
           AbortSignal.timeout(3000),
         );
 
@@ -158,6 +207,7 @@ export default function Home() {
             setResult(r);
             setActive(null);
             setState("done");
+            scheduleProgressiveReveal();
             sseCleanup.current?.();
             sseCleanup.current = null;
           },
@@ -170,7 +220,7 @@ export default function Home() {
         runDemoSimulation();
       }
     },
-    [resetTimers, runDemoSimulation],
+    [resetTimers, runDemoSimulation, scheduleProgressiveReveal],
   );
 
   const isRunning = state === "running";
@@ -218,26 +268,46 @@ export default function Home() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [hasResult]);
 
+  const currentCards = useMemo(() => {
+    if (!result) return [];
+    const tab = TABS.find((t) => t.track === activeTab);
+    if (!tab) return [];
+    return result[tab.key] as unknown as MatchResult["investors"];
+  }, [result, activeTab]);
+
+  const activeReady = readyTracks.has(activeTab);
+
   return (
     <main className="min-h-screen w-full flex flex-col items-center">
+      <TopNav />
+
       {/* hero */}
       <div className="relative w-full">
+        <div aria-hidden className="absolute inset-0 lh-beacon pointer-events-none" />
         <div aria-hidden className="absolute inset-0 lh-grid pointer-events-none" />
-        <div className="relative max-w-5xl mx-auto px-6 pt-16 pb-8 flex flex-col items-center gap-6">
-          <div className="flex items-center gap-2 text-xs uppercase tracking-[0.2em] text-neutral-500">
-            <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse" />
-            <span>lighthouse</span>
-            <span className="opacity-40">·</span>
-            <span>contextcon · bengaluru</span>
+        <div className="relative max-w-5xl mx-auto px-6 pt-14 sm:pt-20 pb-10 flex flex-col items-center gap-6">
+          <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.22em] text-neutral-500">
+            <Logo size={16} beam={false} className="text-neutral-500" />
+            <span>a founder&rsquo;s command center</span>
           </div>
 
-          <h1 className="text-4xl sm:text-6xl font-bold tracking-tight text-center text-balance">
-            A <span className="text-amber-500">command center</span> for founders.
+          <h1 className="text-4xl sm:text-6xl font-semibold tracking-tight text-center text-balance leading-[1.05]">
+            Warm intros, grounded in what they
+            <br className="hidden sm:block" />{" "}
+            posted this week —{" "}
+            <span className="whitespace-nowrap">
+              for{" "}
+              <RotatingWord
+                words={HERO_WORDS}
+                className="text-amber-500 font-semibold"
+              />
+            </span>
           </h1>
           <p className="max-w-2xl text-center text-neutral-600 dark:text-neutral-400 text-balance">
-            Paste a GitHub repo. We return 5 investors, 5 design partners, and 5
-            senior hires — each with a warm intro grounded in something that
-            person posted this week.
+            Paste a GitHub repo. We return{" "}
+            <span className="text-neutral-900 dark:text-neutral-200 font-medium">5 investors</span>,{" "}
+            <span className="text-neutral-900 dark:text-neutral-200 font-medium">5 design partners</span>, and{" "}
+            <span className="text-neutral-900 dark:text-neutral-200 font-medium">5 senior hires</span> — each with a recent-post angle you can use.
           </p>
 
           <div className="w-full max-w-2xl mt-2">
@@ -271,7 +341,7 @@ export default function Home() {
           </div>
 
           {/* thesis blurb */}
-          <section className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white/60 dark:bg-neutral-900/40 backdrop-blur-sm p-5">
+          <section className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white/70 dark:bg-neutral-900/40 backdrop-blur-sm p-5 shadow-sm">
             <div className="text-[11px] uppercase tracking-[0.2em] text-neutral-500 mb-1">
               thesis
             </div>
@@ -299,6 +369,7 @@ export default function Home() {
             {TABS.map((tab, i) => {
               const list = result[tab.key] as unknown as MatchResult["investors"];
               const selected = activeTab === tab.track;
+              const ready = readyTracks.has(tab.track);
               return (
                 <button
                   key={tab.track}
@@ -329,12 +400,24 @@ export default function Home() {
                   <span className="relative z-[1]">{tab.label}</span>
                   <span
                     className={clsx(
-                      "relative z-[1] text-xs tabular-nums rounded-full px-1.5",
+                      "relative z-[1] text-xs tabular-nums rounded-full px-1.5 inline-flex items-center gap-1",
                       selected
                         ? "bg-white/20 dark:bg-neutral-900/20"
                         : "bg-neutral-200 dark:bg-neutral-800",
                     )}
                   >
+                    {!ready && (
+                      <span
+                        aria-hidden
+                        className={clsx(
+                          "inline-block h-1.5 w-1.5 rounded-full",
+                          selected
+                            ? "bg-white/80 dark:bg-neutral-900/70"
+                            : "bg-amber-400",
+                          !reduced && "animate-pulse",
+                        )}
+                      />
+                    )}
                     {list.length}
                   </span>
                 </button>
@@ -342,19 +425,40 @@ export default function Home() {
             })}
           </div>
 
-          {/* cards grid */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {TABS.find((t) => t.track === activeTab) &&
-              (result[
-                TABS.find((t) => t.track === activeTab)!.key
-              ] as unknown as MatchResult["investors"]).map((person) => (
-                <PersonCard
-                  key={`${activeTab}-${person.name}`}
-                  person={person}
-                  track={activeTab}
-                />
-              ))}
-          </div>
+          {/* cards grid — staggered reveal + per-tab fade */}
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={activeTab}
+              initial={reduced ? false : { opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={reduced ? { opacity: 0 } : { opacity: 0, y: -6 }}
+              transition={reduced ? { duration: 0 } : { duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+              className="grid grid-cols-1 md:grid-cols-2 gap-4"
+            >
+              {activeReady ? (
+                currentCards.map((person, i) => (
+                  <motion.div
+                    key={`${activeTab}-${person.name}`}
+                    initial={reduced ? false : { opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={
+                      reduced
+                        ? { duration: 0 }
+                        : {
+                            duration: 0.35,
+                            delay: i * 0.06,
+                            ease: [0.22, 1, 0.36, 1],
+                          }
+                    }
+                  >
+                    <PersonCard person={person} track={activeTab} />
+                  </motion.div>
+                ))
+              ) : (
+                <TrackSkeleton />
+              )}
+            </motion.div>
+          </AnimatePresence>
 
           {/* transparency panel */}
           <HowWeSearched plans={result.query_plan} />
@@ -384,5 +488,31 @@ export default function Home() {
       {/* live backend trace */}
       <LogConsole logs={logs} running={isRunning} />
     </main>
+  );
+}
+
+/** Skeleton shown while a track is pending progressive-reveal. */
+function TrackSkeleton() {
+  return (
+    <>
+      {[0, 1, 2, 3].map((i) => (
+        <div
+          key={i}
+          className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white/50 dark:bg-neutral-900/40 p-5 flex flex-col gap-3 animate-pulse"
+          aria-hidden
+        >
+          <div className="flex items-start gap-3">
+            <div className="h-10 w-10 rounded-full bg-neutral-200 dark:bg-neutral-800" />
+            <div className="flex-1 space-y-2">
+              <div className="h-3 w-2/3 rounded bg-neutral-200 dark:bg-neutral-800" />
+              <div className="h-3 w-1/2 rounded bg-neutral-200 dark:bg-neutral-800" />
+            </div>
+            <div className="h-8 w-12 rounded bg-neutral-200 dark:bg-neutral-800" />
+          </div>
+          <div className="h-3 w-full rounded bg-neutral-200 dark:bg-neutral-800" />
+          <div className="h-3 w-5/6 rounded bg-neutral-200 dark:bg-neutral-800" />
+        </div>
+      ))}
+    </>
   );
 }

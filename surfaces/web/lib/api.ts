@@ -7,6 +7,7 @@ export const API_BASE =
 export interface StartMatchArgs {
   repo_url: string;
   location?: string;
+  user_hint?: string;
 }
 
 export interface StartMatchResponse {

@@ -3,15 +3,21 @@
 @tailwind utilities;
 
 :root {
-  --background: #fafaf9;
-  --foreground: #0a0a0a;
+  --background: #fbfaf7;
+  --foreground: #111111;
+  --surface: #ffffff;
+  --border-subtle: rgba(23, 23, 23, 0.08);
+  --grid: rgba(120, 113, 108, 0.08);
+  --beacon: #f59e0b;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html.dark {
+  --background: #08080a;
+  --foreground: #ededed;
+  --surface: #0f0f11;
+  --border-subtle: rgba(237, 237, 237, 0.08);
+  --grid: rgba(255, 255, 255, 0.05);
+  --beacon: #fbbf24;
 }
 
 html,
@@ -19,6 +25,16 @@ body {
   color: var(--foreground);
   background: var(--background);
   font-family: var(--font-geist-sans), ui-sans-serif, system-ui, Arial, sans-serif;
+}
+
+/* Theme switches shouldn't flash — fade colors. Skip on reduce-motion. */
+html {
+  transition: background-color 240ms ease, color 240ms ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  html {
+    transition: none;
+  }
 }
 
 code,
@@ -43,8 +59,26 @@ pre {
 /* Subtle ambient grid behind the hero — cheap, CSS-only. */
 .lh-grid {
   background-image:
-    linear-gradient(to right, rgba(120, 113, 108, 0.08) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(120, 113, 108, 0.08) 1px, transparent 1px);
+    linear-gradient(to right, var(--grid) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--grid) 1px, transparent 1px);
   background-size: 36px 36px;
   mask-image: radial-gradient(ellipse at center, black 35%, transparent 75%);
+}
+
+/* Ambient beacon glow behind hero — subtle radial, theme-aware. */
+.lh-beacon {
+  background:
+    radial-gradient(
+      40rem 20rem at 50% -4rem,
+      color-mix(in srgb, var(--beacon) 14%, transparent),
+      transparent 70%
+    );
+}
+html.dark .lh-beacon {
+  background:
+    radial-gradient(
+      40rem 20rem at 50% -4rem,
+      color-mix(in srgb, var(--beacon) 22%, transparent),
+      transparent 70%
+    );
 }

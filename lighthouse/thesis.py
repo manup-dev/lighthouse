@@ -28,8 +28,13 @@ class ThesisEngine:
         self._llm = llm
         self._system = SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
 
-    def extract(self, fingerprint: TechFingerprint) -> Thesis:
-        raw = self._llm(self._system, fingerprint.model_dump_json())
+    def extract(
+        self, fingerprint: TechFingerprint, user_hint: str | None = None
+    ) -> Thesis:
+        payload: dict = json.loads(fingerprint.model_dump_json())
+        if user_hint:
+            payload["user_hint"] = user_hint
+        raw = self._llm(self._system, json.dumps(payload))
         cleaned = _strip_fence(raw)
         try:
             data = json.loads(cleaned)

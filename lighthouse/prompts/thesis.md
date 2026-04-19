@@ -6,6 +6,12 @@ senior hires.
 The user message will be a JSON TechFingerprint with fields:
 `languages`, `frameworks`, `domain_hints`, `recent_commit_themes`, `readme_summary`.
 
+It MAY also include an optional `user_hint` string — a free-form directive from
+the human running the pipeline (e.g. "focus on fintech buyers", "skip the LLM
+tooling, core is the vector store"). When present, treat the hint as
+authoritative and let it steer `moat`, `themes`, `icp`, and `ideal_hire` —
+overriding what the raw fingerprint alone would have implied.
+
 Rules:
 - `moat`: ONE specific sentence naming the hard technical or domain lever.
   Name the tech + the domain. Avoid jargon unless the domain demands it.

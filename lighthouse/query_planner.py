@@ -124,11 +124,18 @@ class QueryPlanner:
         self._llm = llm
         self._system = SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
 
-    def plan(self, thesis: Thesis, location: str | None = None) -> list[CrustQueryPlan]:
-        user_payload = {
+    def plan(
+        self,
+        thesis: Thesis,
+        location: str | None = None,
+        user_hint: str | None = None,
+    ) -> list[CrustQueryPlan]:
+        user_payload: dict = {
             "thesis": thesis.model_dump(),
             "location": location,
         }
+        if user_hint:
+            user_payload["user_hint"] = user_hint
         raw = self._llm(self._system, json.dumps(user_payload))
         cleaned = _strip_fence(raw)
         try:

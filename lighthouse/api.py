@@ -26,6 +26,7 @@ _DONE_SENTINEL = ("__done__", None)
 class MatchRequest(BaseModel):
     repo_url: str
     location: str | None = "Bangalore"
+    user_hint: str | None = None
 
 
 @dataclass
@@ -93,6 +94,7 @@ async def create_match(req: MatchRequest) -> dict[str, str]:
                 location=req.location,
                 on_event=on_event,
                 on_log=on_log,
+                user_hint=req.user_hint,
             )
             job.result = result
             job.queue.put_nowait(("result", result))

@@ -4,9 +4,24 @@ import { useEffect, useMemo, useRef, useState, FormEvent } from "react";
 import clsx from "clsx";
 
 export interface InputFormProps {
-  onSubmit: (args: { repo_url: string; location?: string }) => void;
+  onSubmit: (args: {
+    repo_url: string;
+    location?: string;
+    user_hint?: string;
+  }) => void;
   disabled?: boolean;
 }
+
+const LOCATION_SUGGESTIONS = [
+  "Bangalore",
+  "Mumbai",
+  "Delhi NCR",
+  "San Francisco",
+  "New York",
+  "London",
+  "Singapore",
+  "Remote / Anywhere",
+];
 
 const DEMO_REPO = "https://github.com/manup-dev/lighthouse";
 const URL_RE = /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/?$/;
@@ -26,6 +41,8 @@ function parseRepo(raw: string): { org: string; repo: string } | null {
 export default function InputForm({ onSubmit, disabled }: InputFormProps) {
   const [repo, setRepo] = useState("");
   const [loc, setLoc] = useState("");
+  const [hint, setHint] = useState("");
+  const [showHint, setShowHint] = useState(false);
   const [touched, setTouched] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
@@ -54,7 +71,11 @@ export default function InputForm({ onSubmit, disabled }: InputFormProps) {
     if (!url) return;
     setTouched(true);
     if (!isValid) return;
-    onSubmit({ repo_url: url, location: loc.trim() || undefined });
+    onSubmit({
+      repo_url: url,
+      location: loc.trim() || undefined,
+      user_hint: hint.trim() || undefined,
+    });
   }
 
   function fillDemo() {
@@ -131,6 +152,7 @@ export default function InputForm({ onSubmit, disabled }: InputFormProps) {
         <div className="hidden sm:block w-px self-stretch bg-neutral-200 dark:bg-neutral-800" />
         <input
           type="text"
+          list="lh-location-suggestions"
           placeholder="location (optional)"
           value={loc}
           onChange={(e) => setLoc(e.target.value)}
@@ -141,6 +163,11 @@ export default function InputForm({ onSubmit, disabled }: InputFormProps) {
             "placeholder:text-neutral-400 text-neutral-900 dark:text-neutral-50",
           )}
         />
+        <datalist id="lh-location-suggestions">
+          {LOCATION_SUGGESTIONS.map((v) => (
+            <option key={v} value={v} />
+          ))}
+        </datalist>
         <button
           type="submit"
           disabled={disabled || !repo.trim()}
@@ -175,14 +202,54 @@ export default function InputForm({ onSubmit, disabled }: InputFormProps) {
             </span>
           )}
         </div>
-        <div className="hidden sm:block opacity-60">
-          press{" "}
-          <kbd className="px-1.5 py-0.5 rounded border border-neutral-300 dark:border-neutral-700 font-mono text-[10px]">
-            /
-          </kbd>{" "}
-          to focus
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => setShowHint((v) => !v)}
+            disabled={disabled}
+            className="text-[11px] underline decoration-dotted underline-offset-4 hover:text-neutral-900 dark:hover:text-neutral-100 disabled:opacity-50"
+            aria-expanded={showHint}
+          >
+            {showHint ? "− hide focus" : "+ add custom focus"}
+            {hint.trim().length > 0 && !showHint && (
+              <span className="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-amber-400 align-middle" />
+            )}
+          </button>
+          <div className="hidden sm:block opacity-60">
+            press{" "}
+            <kbd className="px-1.5 py-0.5 rounded border border-neutral-300 dark:border-neutral-700 font-mono text-[10px]">
+              /
+            </kbd>{" "}
+            to focus
+          </div>
         </div>
       </div>
+
+      {showHint && (
+        <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white/60 dark:bg-neutral-900/40 p-3 flex flex-col gap-1">
+          <label
+            htmlFor="lh-user-hint"
+            className="text-[11px] uppercase tracking-[0.2em] text-neutral-500"
+          >
+            custom focus — steers the thesis + query planner
+          </label>
+          <textarea
+            id="lh-user-hint"
+            value={hint}
+            onChange={(e) => setHint(e.target.value)}
+            disabled={disabled}
+            rows={3}
+            placeholder={
+              'e.g. "US investors only, skip India", "focus on fintech buyers not logistics", "ignore the ML wrapper — core is the vector DB"'
+            }
+            className="w-full bg-transparent resize-y text-sm outline-none text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400"
+          />
+          <div className="text-[10px] text-neutral-500">
+            appended to the prompts sent to the LLM — overrides what the raw
+            repo fingerprint would have inferred.
+          </div>
+        </div>
+      )}
     </div>
   );
 }

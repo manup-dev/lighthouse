@@ -1,0 +1,47 @@
+- generic [active] [ref=e1]:
+  - main [ref=e2]:
+    - navigation [ref=e4]:
+      - link "Lighthouse home" [ref=e5] [cursor=pointer]:
+        - /url: /
+        - img "Lighthouse" [ref=e6]
+        - generic [ref=e12]: Lighthouse
+        - generic [ref=e13]: contextcon · bengaluru
+      - generic [ref=e14]:
+        - link "GitHub" [ref=e15] [cursor=pointer]:
+          - /url: https://github.com/manup-dev/lighthouse
+          - img [ref=e16]
+          - generic [ref=e18]: GitHub
+        - button "Dark theme" [ref=e19] [cursor=pointer]:
+          - generic [ref=e20]:
+            - img [ref=e21]
+            - img [ref=e24]
+          - generic [ref=e26]: dark
+    - generic [ref=e28]:
+      - generic [ref=e29]:
+        - img "Lighthouse" [ref=e30]
+        - generic [ref=e34]: a founder’s command center
+      - heading "Warm intros, grounded in what they posted this week — for founders." [level=1] [ref=e35]:
+        - text: Warm intros, grounded in what they
+        - text: posted this week —
+        - generic [ref=e36]:
+          - text: for
+          - generic [ref=e39]: founders.
+      - paragraph [ref=e40]: Paste a GitHub repo. We return 5 investors, 5 design partners, and 5 senior hires — each with a recent-post angle you can use.
+      - generic [ref=e42]:
+        - generic [ref=e43]:
+          - textbox "GitHub repo URL" [ref=e44]:
+            - /placeholder: paste a GitHub repo URL...
+          - combobox "Founder location" [ref=e46]
+          - button "Find" [disabled] [ref=e47]
+        - generic [ref=e48]:
+          - generic [ref=e50]:
+            - text: Or try
+            - button "manup-dev/lighthouse" [ref=e51] [cursor=pointer]
+          - generic [ref=e52]:
+            - button "+ add custom focus" [ref=e53] [cursor=pointer]
+            - generic [ref=e54]: press / to focus
+    - generic [ref=e55]:
+      - text: Try
+      - code [ref=e56]: github.com/acme/freight-graph
+      - text: or any public repo to see a demo run.
+  - alert [ref=e57]
