@@ -38,7 +38,9 @@ def test_cli_match_json_flag_emits_parseable_match_result(monkeypatch):
 
 def test_cli_match_without_api_key_and_without_dry_run_errors(monkeypatch):
     monkeypatch.delenv("CRUSTDATA_API_KEY", raising=False)
-    result = runner.invoke(app, ["tests/fixtures/repos/demo_repo"])
+    # Prevent load_dotenv from repopulating the key from a real local .env
+    with patch("lighthouse.cli.load_dotenv", lambda *a, **kw: None):
+        result = runner.invoke(app, ["tests/fixtures/repos/demo_repo"])
     assert result.exit_code != 0
     assert "CRUSTDATA_API_KEY" in result.output
 
