@@ -155,3 +155,21 @@ async def test_pipeline_stats_include_counts_and_duration():
     assert result.stats["duration_sec"] >= 0
     assert "candidate_counts" in result.stats
     assert result.stats["candidate_counts"]["investor"] >= 1
+
+
+async def test_pipeline_stats_expose_provider_and_model_from_llm():
+    from lighthouse.llm import OllamaLLM
+
+    llm = _make_llm_router()
+    # shim provider + model onto the fake callable
+    llm.provider = "ollama"  # type: ignore[attr-defined]
+    llm.model = "qwen2.5:14b-instruct-q4_K_M"  # type: ignore[attr-defined]
+    crust = FakeCrustClient()
+    result = await Pipeline(llm=llm, crust=crust).run(
+        repo_url="tests/fixtures/repos/demo_repo",
+    )
+    assert result.stats["provider"] == "ollama"
+    assert result.stats["model"] == "qwen2.5:14b-instruct-q4_K_M"
+
+    # Real OllamaLLM class attrs exposed
+    assert OllamaLLM.provider == "ollama"

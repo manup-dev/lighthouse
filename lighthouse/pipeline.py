@@ -99,6 +99,8 @@ class Pipeline:
                 t: len(candidates_by_track.get(t, [])) for t in _TRACKS
             },
             "query_count": len(plans),
+            "provider": getattr(self.llm, "provider", None),
+            "model": getattr(self.llm, "model", None),
         }
 
         result = MatchResult(

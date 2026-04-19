@@ -17,6 +17,8 @@ class LLM(Protocol):
 
 
 class OllamaLLM:
+    provider = "ollama"
+
     def __init__(
         self,
         model: str = DEFAULT_OLLAMA_MODEL,
@@ -46,6 +48,8 @@ class OllamaLLM:
 
 
 class AnthropicLLM:
+    provider = "anthropic"
+
     def __init__(
         self,
         model: str = DEFAULT_ANTHROPIC_MODEL,
